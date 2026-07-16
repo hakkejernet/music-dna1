@@ -8,6 +8,7 @@ const MAX_SEED_GENRES = 2;
 interface SpotifySeed {
   userId: string;
   seedArtistIds: string[];
+  seedArtistNames: string[];
   seedGenres: string[];
 }
 
@@ -17,14 +18,16 @@ interface SpotifySeed {
 const buildSpotifySeed = async (): Promise<SpotifySeed> => {
   try {
     const [user, topArtists] = await Promise.all([getCurrentUser(), getTopArtists(5)]);
+    const seedArtists = topArtists.slice(0, MAX_SEED_ARTISTS);
     return {
       userId: user.id,
-      seedArtistIds: topArtists.slice(0, MAX_SEED_ARTISTS).map((artist) => artist.id),
+      seedArtistIds: seedArtists.map((artist) => artist.id),
+      seedArtistNames: seedArtists.map((artist) => artist.name),
       seedGenres: [...new Set(topArtists.flatMap((artist) => artist.genres))].slice(0, MAX_SEED_GENRES),
     };
   } catch (error) {
     console.warn('[recommendations] Kunne ikke hente Spotify top-kunstnere til seeds, fortsætter uden:', error);
-    return { userId: '', seedArtistIds: [], seedGenres: [] };
+    return { userId: '', seedArtistIds: [], seedArtistNames: [], seedGenres: [] };
   }
 };
 
@@ -44,6 +47,7 @@ export const buildUserProfile = async (): Promise<UserProfile> => {
   return {
     userId: spotifySeed.userId,
     seedArtistIds: spotifySeed.seedArtistIds,
+    seedArtistNames: spotifySeed.seedArtistNames,
     seedTrackIds: [],
     seedGenres: spotifySeed.seedGenres,
     libraryArtistIds: libraryArtists.map((artist) => artist.id),

@@ -23,4 +23,7 @@ export const env = {
       `${window.location.origin}/callback`
     );
   },
+  get lastfmApiKey(): string {
+    return required('VITE_LASTFM_API_KEY', import.meta.env.VITE_LASTFM_API_KEY as string | undefined);
+  },
 };

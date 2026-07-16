@@ -16,15 +16,16 @@ alt sammen lokalt i din browser.
 - [x] Discovery-side (forsiden, `/`) — viser én sang ad gangen med
       Gem/Afvis/Kendte allerede/Næste og et "Hvorfor denne?"-panel.
 - [x] `RecommendationQueue`-arkitektur — Discovery læser fra en separat
-      anbefalings-kø (i dag fyldt med mock-data), ikke fra brugerens eget
-      bibliotek. Klar til at modtage en rigtig kilde senere.
+      anbefalings-kø, ikke fra brugerens eget bibliotek.
 - [x] `SpotifyRecommendationProvider` — første `RecommendationProvider`.
       Kaldte Spotifys `/recommendations` (begrænset for nye apps, ligesom
       audio-features). **Nu deprecated** — se nedenfor.
-- [x] `LastFmRecommendationProvider` — første aktive provider efter
-      arkitektur-skiftet væk fra Spotify som recommendation-motor.
-      Mock-data indtil videre, fuldstændig uafhængig af Spotify.
-      `providerConfig.ts` styrer hvilke providers der er aktive.
+- [x] `LastFmRecommendationProvider` — **rigtige anbefalinger, ikke mock.**
+      Udleder seeds fra brugerens Spotify-topkunstnere, henter lignende
+      kunstnere og deres populære tracks via Last.fms API. Fuldstændig
+      uafhængig af Spotify ved runtime. `providerConfig.ts` styrer hvilke
+      providers der er aktive. Falder tilbage til mock-data hvis Last.fm
+      ikke leverer noget. Se `CHANGELOG.md` for kendte API-begrænsninger.
 - [x] `modules/ranking/` — Recommendation Ranking Engine. Henter ikke
       musik, rangerer kun det providers har fundet. `SimpleRanker` er
       regelbaseret (ny kunstner / genre-match / allerede i bibliotek /
@@ -37,8 +38,8 @@ alt sammen lokalt i din browser.
       viser nu de rigtige `explanations` fra `SimpleRanker` i stedet for
       placeholder-tekst.
 
-Ingen rigtige anbefalinger endnu — det kommer i en senere version. Se
-[CHANGELOG.md](./CHANGELOG.md) for detaljer pr. opgave.
+Se [CHANGELOG.md](./CHANGELOG.md) for detaljer pr. opgave, inkl. kendte
+API-begrænsninger i Last.fm-integrationen.
 
 ### Spotifys rolle
 
@@ -77,8 +78,11 @@ src/
     recommendations/ — Recommendation-interface, RecommendationQueue,
                         RecommendationProvider-interface,
                         providerConfig.ts (aktive providers),
-                        LastFmRecommendationProvider (aktiv, mock),
+                        LastFmRecommendationProvider (aktiv, rigtig API),
                         SpotifyRecommendationProvider (deprecated)
+    lastfm/     — rå Last.fm API-klient (artist.getsimilar,
+                  artist.gettoptracks) — bruges kun af
+                  LastFmRecommendationProvider
     ranking/    — RecommendationRanker-interface + SimpleRanker.
                   Rangerer, henter aldrig musik. Uafhængig af enhver
                   provider — kender kun Recommendation/UserProfile-typerne.
@@ -107,19 +111,27 @@ kilder — uden at `spotify/`-modulet skal ændres.
    `http://127.0.0.1:5173/callback`
 3. Kopiér **Client ID**.
 
-### 2. Konfigurér miljøvariabler
+### 2. Opret en Last.fm API-nøgle
+
+1. Gå til [last.fm/api/account/create](https://www.last.fm/api/account/create)
+   og opret en gratis API-konto — ingen godkendelsesproces, nøglen virker
+   med det samme.
+2. Kopiér **API key**.
+
+### 3. Konfigurér miljøvariabler
 
 ```bash
 cp .env.example .env.local
 ```
 
-Indsæt dit Client ID i `.env.local`:
+Indsæt dine nøgler i `.env.local`:
 
 ```
 VITE_SPOTIFY_CLIENT_ID=dit-client-id
+VITE_LASTFM_API_KEY=din-lastfm-nøgle
 ```
 
-### 3. Installér og kør
+### 4. Installér og kør
 
 ```bash
 npm install

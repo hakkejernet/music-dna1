@@ -9,6 +9,7 @@ import { buildUserProfile } from './userProfile';
 const EMPTY_PROFILE: UserProfile = {
   userId: '',
   seedArtistIds: [],
+  seedArtistNames: [],
   seedTrackIds: [],
   seedGenres: [],
   libraryArtistIds: [],

@@ -1,72 +1,123 @@
-import { shuffle } from '../../lib/shuffle';
+import { getSimilarArtists, getTopTracksForArtist } from '../lastfm';
+import type { LastFmTrack } from '../lastfm';
 import type { SpotifyTrack } from '../spotify/types';
 import type { Recommendation, RecommendationProvider, UserProfile } from './types';
 
-// Mock candidates standing in for a future Last.fm-backed source. This
-// provider has zero runtime dependency on modules/spotify — it never
-// imports Spotify's client/auth/endpoints, and getRecommendations below
-// doesn't touch the given UserProfile at all. The `SpotifyTrack` type is
-// just the shared track shape every provider's Recommendation.track uses,
-// not a sign of coupling to the Spotify API.
-const mkTrack = (
-  id: string,
-  name: string,
-  artistName: string,
-  albumName: string,
-  releaseDate: string,
-  durationMs: number,
-  popularity: number,
-): SpotifyTrack => ({
-  id,
-  name,
-  durationMs,
+const MAX_SEED_ARTISTS = 3;
+const MAX_SIMILAR_PER_SEED = 5;
+const MAX_TRACKS_PER_ARTIST = 5;
+
+/** Rough, non-scientific 0–100 spread from raw playcount — descriptive metadata only, not the recommendation score. */
+const popularityFromPlaycount = (playcount: number): number =>
+  Math.max(0, Math.min(100, Math.round(Math.log10(playcount + 1) * 14)));
+
+const toSpotifyTrackShape = (track: LastFmTrack): SpotifyTrack => ({
+  id: track.id,
+  name: track.name,
+  durationMs: 0,
   explicit: false,
-  popularity,
+  popularity: popularityFromPlaycount(track.playcount),
   isrc: null,
   previewUrl: null,
-  albumId: `${id}-album`,
-  albumName,
-  albumImages: [],
-  releaseDate,
-  releaseDatePrecision: 'day',
-  artists: [{ id: `${id}-artist`, name: artistName }],
+  albumId: `lastfm-${track.artistMbid ?? track.artistName}`,
+  albumName: 'Ukendt album',
+  albumImages: track.images.map((image) => ({ url: image.url, width: null, height: null })),
+  releaseDate: null,
+  releaseDatePrecision: null,
+  artists: [{ id: track.artistMbid ?? `lastfm-artist-${track.artistName}`, name: track.artistName }],
   addedAt: null,
   playlistIds: [],
 });
 
-const MOCK_TRACKS: SpotifyTrack[] = [
-  mkTrack('lfm-1', 'Salt Circuit', 'Harbor Lines', 'Salt Circuit', '2024-08-11', 198000, 22),
-  mkTrack('lfm-2', 'Quiet Static', 'Loom & Wire', 'Quiet Static', '2025-02-27', 214000, 19),
-  mkTrack('lfm-3', 'Marrow', 'Kite Season', 'Marrow', '2024-12-05', 231000, 31),
-  mkTrack('lfm-4', 'Tin Roof Weather', 'Panelbeater', 'Tin Roof Weather EP', '2025-04-16', 189000, 15),
-];
-
-// Parallel to MOCK_TRACKS — Last.fm's real API reports genres as "tags" on
-// the track/artist, which is what this stands in for.
-const MOCK_GENRES: string[] = ['shoegaze', 'math rock', 'afrobeat', 'trip hop'];
-
-const MOCK_REASON_SETS: string[][] = [
-  ['Populær blandt lyttere med lignende smag på Last.fm'],
-  ['Scrobbles overlapper med kunstnere du lytter til'],
-  ['Ligner sange andre Last.fm-brugere har tagget ens'],
-];
+interface CandidateArtist {
+  name: string;
+  match: number;
+  seed: string;
+}
 
 /**
- * First non-Spotify RecommendationProvider. No real Last.fm API calls yet
- * — this is architecture only, returning a fixed mock batch so the queue
- * can be filled from more than one source without DiscoveryPage changing.
+ * First real (non-mock) RecommendationProvider. Not perfect, just working:
+ * no caching, no cross-source fusion, no retry/backoff. Fully independent
+ * of Spotify at runtime — it only reads artist *names* off UserProfile
+ * (already fetched from Spotify's top-artists call elsewhere) and talks to
+ * Last.fm from here on. If a call for one artist fails, that artist is
+ * skipped and the rest continue — this returns as many recommendations as
+ * it can get, not all-or-nothing.
  */
 export class LastFmRecommendationProvider implements RecommendationProvider {
-  async getRecommendations(_user: UserProfile): Promise<Recommendation[]> {
-    return shuffle(
-      MOCK_TRACKS.map((track, index) => ({
-        id: `lastfm-rec-${track.id}`,
-        track,
-        source: 'lastfm-mock',
-        score: Number((0.8 - index * 0.1).toFixed(2)),
-        reasons: MOCK_REASON_SETS[index % MOCK_REASON_SETS.length],
-        genres: [MOCK_GENRES[index % MOCK_GENRES.length]],
-      })),
+  async getRecommendations(user: UserProfile): Promise<Recommendation[]> {
+    try {
+      const seedNames = user.seedArtistNames.slice(0, MAX_SEED_ARTISTS);
+      if (seedNames.length === 0) {
+        console.warn('[LastFmRecommendationProvider] Ingen seed-kunstnere tilgængelige — springer Last.fm-kald over.');
+        return [];
+      }
+
+      const candidateArtists = await this.findCandidateArtists(seedNames);
+      if (candidateArtists.length === 0) {
+        console.warn('[LastFmRecommendationProvider] Last.fm fandt ingen lignende kunstnere for nogen af seeds.');
+        return [];
+      }
+
+      return await this.collectRecommendations(candidateArtists);
+    } catch (error) {
+      console.warn('[LastFmRecommendationProvider] Uventet fejl, returnerer ingen anbefalinger:', error);
+      return [];
+    }
+  }
+
+  /** Similar artists per seed, merged and deduplicated by name (keeping the best match). */
+  private async findCandidateArtists(seedNames: string[]): Promise<CandidateArtist[]> {
+    const results = await Promise.allSettled(
+      seedNames.map(async (seed) => ({ seed, similar: await getSimilarArtists(seed) })),
     );
+
+    const byName = new Map<string, CandidateArtist>();
+    for (const result of results) {
+      if (result.status === 'rejected') {
+        console.warn('[LastFmRecommendationProvider] artist.getsimilar fejlede for en seed-kunstner:', result.reason);
+        continue;
+      }
+      const { seed, similar } = result.value;
+      for (const artist of similar.slice(0, MAX_SIMILAR_PER_SEED)) {
+        const key = artist.name.toLowerCase();
+        const existing = byName.get(key);
+        if (!existing || artist.match > existing.match) {
+          byName.set(key, { name: artist.name, match: artist.match, seed });
+        }
+      }
+    }
+    return [...byName.values()];
+  }
+
+  /** Top tracks per candidate artist, mapped to Recommendation and deduplicated by track id. */
+  private async collectRecommendations(candidates: CandidateArtist[]): Promise<Recommendation[]> {
+    const results = await Promise.allSettled(
+      candidates.map(async (candidate) => ({ candidate, tracks: await getTopTracksForArtist(candidate.name) })),
+    );
+
+    const byTrackId = new Map<string, Recommendation>();
+    for (const result of results) {
+      if (result.status === 'rejected') {
+        console.warn('[LastFmRecommendationProvider] artist.gettoptracks fejlede for en kandidat-kunstner:', result.reason);
+        continue;
+      }
+      const { candidate, tracks } = result.value;
+      for (const track of tracks.slice(0, MAX_TRACKS_PER_ARTIST)) {
+        const recommendation: Recommendation = {
+          id: `lastfm-rec-${track.id}`,
+          track: toSpotifyTrackShape(track),
+          source: 'lastfm',
+          score: candidate.match,
+          reasons: [`Ligner ${candidate.seed} på Last.fm`],
+          genres: [],
+        };
+        const existing = byTrackId.get(recommendation.track.id);
+        if (!existing || recommendation.score > existing.score) {
+          byTrackId.set(recommendation.track.id, recommendation);
+        }
+      }
+    }
+    return [...byTrackId.values()];
   }
 }

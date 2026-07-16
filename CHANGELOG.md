@@ -1,5 +1,71 @@
 # Changelog
 
+## LastFmRecommendationProvider: rigtige Last.fm-anbefalinger, ikke mock
+
+Discovery viser nu rigtige sange fra Last.fm i stedet for mock-data. "Ikke
+perfekt, bare fungerende" — ingen caching, ingen AI, ingen avanceret ranking.
+
+- **Flow:** Spotify-topkunstnere (allerede hentet til `UserProfile`) → Last.fm
+  `artist.getsimilar` pr. seed-kunstner → dedupliceret liste af lignende
+  kunstnere (bedste match bevaret ved overlap) → Last.fm
+  `artist.gettoptracks` pr. kandidat-kunstner → konverteret til
+  `Recommendation` med `source: "lastfm"`, `score` = kunstnerens
+  Last.fm-match (0–1), og en menneskelæsbar `reason` ("Ligner X på Last.fm")
+- **Resiliens:** hvert kald pakkes i `Promise.allSettled` — fejler ét
+  `artist.getsimilar`- eller `artist.gettoptracks`-kald for én kunstner,
+  logges det tydeligt og de øvrige kunstnere fortsætter uændret. Provideren
+  kaster aldrig, returnerer `[]` i værste fald
+- `UserProfile` har fået `seedArtistNames` (Last.fms API virker på
+  kunstnernavne, ikke Spotify-ID'er — navnene lå allerede i
+  `buildUserProfile()`s Spotify-kald, blot ikke gemt før nu)
+- Nyt modul `modules/lastfm/` (klient + endpoints for
+  `artist.getsimilar`/`artist.gettoptracks`, adskilt fra
+  `modules/recommendations/lastFmProvider.ts` der laver
+  Recommendation-mapningen — samme mønster som `modules/spotify`)
+- Ny env-variabel `VITE_LASTFM_API_KEY` (gratis nøgle via
+  last.fm/api/account/create)
+
+### API-begrænsninger fundet under implementering
+
+- Last.fms `artist.gettoptracks` giver **ikke** album, udgivelsesdato,
+  varighed, ISRC eller preview-URL — kun kunstner/track-navn, playcount,
+  listeners og billede. `SpotifyTrack`-felterne der mangler er sat til
+  neutrale/ærlige standardværdier (`albumName: "Ukendt album"`,
+  `previewUrl: null`, `durationMs: 0`, osv.) frem for at gætte.
+- Last.fm returnerer HTTP 200 selv ved metode-fejl (fx ukendt
+  kunstnernavn) — fejlen ligger i stedet i et `error`-felt i JSON-body'en.
+  `modules/lastfm/client.ts` tjekker begge dele.
+- Ingen stabile track-ID'er fra Last.fm (mbid mangler ofte) — bruger mbid
+  når det findes, ellers en slug af kunstner+titel som fallback-ID.
+- Rate limit er 5 kald/sekund pr. IP (jf. `docs/data-sources.md`) — med op
+  til 3 seed-kunstnere × 5 lignende × 5 tracks kan et fuldt load ramme
+  ~15–18 kald. Ingen backoff/retry er bygget ind endnu (bevidst, jf.
+  opgavens "ikke avanceret" scope) — enkelte 429'ere vil blot resultere i
+  færre (men stadig mange) anbefalinger.
+
+### Vigtigt: ikke testet live i denne session
+
+Dette sandbox-miljøs udgående netværkspolitik blokerer eksplicit
+`api.spotify.com` **og** `ws.audioscrobbler.com` (Last.fm) med en
+`403 gateway policy denial` — bekræftet via proxy-statusloggen, ikke noget
+en API-nøgle kan løse. Det har derfor ikke været muligt at gennemføre den
+efterspurgte test med en rigtig Spotify-bruger i denne session.
+
+I stedet er hele flowet (Spotify-login → `buildUserProfile` →
+`LastFmRecommendationProvider` → `SimpleRanker` → `RecommendationQueue` →
+Discovery-UI) verificeret med Playwrights netværks-mocking: realistiske
+Spotify- og Last.fm-svar simuleret lokalt i browseren, inklusiv et
+kunstner-kald der bevidst fejler for at bekræfte resiliens-kravet.
+Resultat: **70 unikke anbefalinger** ud af 15 kandidat-kunstnere (14
+lykkedes, 1 simuleret fejl), altså komfortabelt over kravet om mindst 20.
+Denne test beviser at parsing/mapping/resiliens-logikken er korrekt — den
+beviser **ikke** at Last.fms rigtige data eller rate limits opfører sig
+identisk. **Denne opgave bør testes af en rigtig bruger med en gyldig
+Spotify- og Last.fm-nøgle i et miljø med almindelig internetadgang**, før
+den betragtes som fuldt bekræftet.
+
+- Build, typecheck og lint grønne.
+
 ## To produktfejl lukket: Gem virker, "Hvorfor denne?" viser rigtige forklaringer
 
 Lukker de to huller `docs/mvp.md` fandt ved gennemgang af koden. Ingen nye
