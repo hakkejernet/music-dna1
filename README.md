@@ -37,6 +37,11 @@ alt sammen lokalt i din browser.
       udelukker den fra alle fremtidige sessioner. "Hvorfor denne?"
       viser nu de rigtige `explanations` fra `SimpleRanker` i stedet for
       placeholder-tekst.
+- [x] `modules/preferences/` — ranking lærer af brugerens gemte og
+      afviste anbefalinger (foretrukne/undgåede genrer og kilder,
+      foretrukne kunstnere/årtier). Kun lokal statistik, ingen AI, ingen
+      caching. `SimpleRanker` bruger nu `PreferenceProfile` til 6 nye
+      regler.
 
 Se [CHANGELOG.md](./CHANGELOG.md) for detaljer pr. opgave, inkl. kendte
 API-begrænsninger i Last.fm-integrationen.
@@ -85,9 +90,14 @@ src/
                   LastFmRecommendationProvider
     ranking/    — RecommendationRanker-interface + SimpleRanker.
                   Rangerer, henter aldrig musik. Uafhængig af enhver
-                  provider — kender kun Recommendation/UserProfile-typerne.
-    history/    — RecommendationHistory (IndexedDB): gemte anbefalinger,
-                  bruges til at fjerne dem fra fremtidige queues
+                  provider — kender kun Recommendation/UserProfile- og
+                  PreferenceProfile-typerne.
+    history/    — RecommendationHistory (IndexedDB): gemte OG afviste
+                  anbefalinger. Gemte bruges til at fjerne sange fra
+                  fremtidige queues; begge fodrer modules/preferences
+    preferences/ — PreferenceProfile: foretrukne/undgåede genrer og
+                   kilder, foretrukne kunstnere/årtier — udregnet rent
+                   statistisk fra modules/history, ingen AI, ingen caching
   features/
     auth/       — login-skærm, OAuth-callback, auth-context
     discovery/  — Discovery-side (forsiden): ét sang-kort ad gangen,

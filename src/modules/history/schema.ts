@@ -8,9 +8,20 @@ export interface SavedRecommendation {
   savedAt: number;
 }
 
+export interface RejectedRecommendation {
+  id: string;
+  trackId: string;
+  recommendation: RankedRecommendation;
+  rejectedAt: number;
+}
+
 export interface HistoryDb extends DBSchema {
   saved: {
     key: string;
     value: SavedRecommendation;
+  };
+  rejected: {
+    key: string;
+    value: RejectedRecommendation;
   };
 }

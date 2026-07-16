@@ -1,5 +1,53 @@
 # Changelog
 
+## PreferenceProfile: ranking lærer af gemte/afviste anbefalinger
+
+Recommendation Engine begynder at lære af brugerens feedback — stadig ingen
+AI, ingen ML, kun lokal statistik (tælling og tærskelværdier).
+
+- Nyt modul `modules/preferences/` med `buildPreferenceProfile()`. Beregnes
+  frisk hver gang (ingen caching) ud fra `modules/history`s gemte og
+  afviste anbefalinger:
+  - `favoriteGenres` / `avoidedGenres` — genrer der går igen mindst 2 gange
+    blandt hhv. gemte og afviste sange
+  - `favoriteArtistIds` — enhver kunstner brugeren har gemt en sang med før
+  - `favoriteDecades` — årtier der går igen mindst 2 gange blandt gemte
+    sange (ofte tom i praksis lige nu, da Last.fm ikke leverer
+    udgivelsesdato — se forrige changelog-punkt)
+  - `favoriteSources` / `avoidedSources` — kilder (`"lastfm"` osv.) der
+    går igen mindst 2 gange blandt hhv. gemte og afviste sange
+- **Ny forudsætning tilføjet:** "Afvis"-knappen gemte tidligere ingenting —
+  uden det ville `avoidedGenres`/`avoidedSources` aldrig kunne udregnes.
+  `modules/history` har fået en ny `rejected`-store (versioneret
+  IndexedDB-migration, ingen datatab for eksisterende `saved`-data), og
+  "Afvis" persisterer nu en afvisning i baggrunden. **Ingen synlig
+  UI-ændring** — knappen gør stadig præcis det samme (går videre til næste
+  sang), blot med et usynligt databaseskriv, ligesom "Gem" allerede gjorde
+- `RankingInput` har fået et valgfrit `preferences?: PreferenceProfile`-felt.
+  En helt ny bruger uden historik rangerer præcis som før — reglerne
+  herunder er additive og no-op uden data
+- `SimpleRanker` har fået 6 nye simple regler, alle med tilhørende
+  `explanations`:
+  - `+15` genre matcher `favoriteGenres` → "Du har tidligere gemt mange
+    sange fra denne genre"
+  - `-15` genre matcher `avoidedGenres` → "Du afviser ofte sange fra denne
+    genre"
+  - `+10` kunstner matcher `favoriteArtistIds` → "Du har tidligere gemt
+    sange med denne kunstner"
+  - `+5` / `-5` kilde matcher `favoriteSources` / `avoidedSources` →
+    tilsvarende forklaringer
+  - `+5` årti matcher `favoriteDecades` → "Du foretrækker ofte musik fra
+    dette årti"
+- `loadRecommendationQueue()` bygger nu `PreferenceProfile` og sender den
+  med til `SimpleRanker.rank(...)`
+- Verificeret: seedede gemt/afvist-historik direkte i IndexedDB (2× samme
+  genre gemt, 2× en anden genre afvist, 1× en bestemt kunstner gemt), og
+  bekræftede at den foretrukne genre/kunstner rangerede øverst med de
+  rigtige forklaringer, mens den undgåede genre rangerede nederst — uden
+  nogen ændring i DOM-struktur eller synlig UI
+- Ingen AI, ingen nye eksterne API'er, ingen caching — kun lokal statistik
+- Build, typecheck og lint grønne
+
 ## LastFmRecommendationProvider: rigtige Last.fm-anbefalinger, ikke mock
 
 Discovery viser nu rigtige sange fra Last.fm i stedet for mock-data. "Ikke

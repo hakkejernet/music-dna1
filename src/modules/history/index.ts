@@ -1,2 +1,9 @@
-export { getAllSaved, getSavedCount, getSavedTrackIds, saveRecommendation } from './recommendationHistory';
-export type { SavedRecommendation } from './schema';
+export {
+  getAllRejected,
+  getAllSaved,
+  getSavedCount,
+  getSavedTrackIds,
+  rejectRecommendation,
+  saveRecommendation,
+} from './recommendationHistory';
+export type { RejectedRecommendation, SavedRecommendation } from './schema';

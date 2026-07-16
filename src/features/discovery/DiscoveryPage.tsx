@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { getSavedCount, saveRecommendation } from '../../modules/history';
+import { getSavedCount, rejectRecommendation, saveRecommendation } from '../../modules/history';
 import type { RankedRecommendation } from '../../modules/ranking';
 import { getPrimaryGenre, loadRecommendationQueue, RecommendationQueue } from '../../modules/recommendations';
 import { useAuth } from '../auth/AuthContext';
@@ -46,6 +46,9 @@ export const DiscoveryPage = () => {
       setSavedCount((count) => count + 1);
       next = queue.current();
     } else {
+      if (actionKey === 'reject') {
+        await rejectRecommendation(current);
+      }
       next = queue.advance();
     }
 

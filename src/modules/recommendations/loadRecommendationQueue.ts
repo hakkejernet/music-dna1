@@ -1,4 +1,5 @@
 import { getSavedTrackIds } from '../history';
+import { buildPreferenceProfile } from '../preferences';
 import { SimpleRanker, type RankedRecommendation } from '../ranking';
 import { createMockRecommendations } from './mockData';
 import { getConfiguredProviders } from './providerConfig';
@@ -38,8 +39,10 @@ const ranker = new SimpleRanker();
  * every provider comes back empty, this falls back to the existing mock
  * recommendations. Already-saved tracks (see modules/history) are filtered
  * out so a song the user saved once never resurfaces in a later session.
- * Whatever's left is run through SimpleRanker before it reaches the queue,
- * so RecommendationQueue holds RankedRecommendation objects.
+ * Whatever's left is run through SimpleRanker — together with a
+ * PreferenceProfile learned purely from local save/reject history (see
+ * modules/preferences) — before it reaches the queue, so
+ * RecommendationQueue holds RankedRecommendation objects.
  */
 export const loadRecommendationQueue = async (): Promise<RecommendationQueue<RankedRecommendation>> => {
   const profile = await buildProfileSafely();
@@ -58,7 +61,8 @@ export const loadRecommendationQueue = async (): Promise<RecommendationQueue<Ran
   const savedTrackIds = await getSavedTrackIds();
   const unseen = batch.filter((recommendation) => !savedTrackIds.has(recommendation.track.id));
 
-  const ranked = ranker.rank({ recommendations: unseen, profile });
+  const preferences = await buildPreferenceProfile();
+  const ranked = ranker.rank({ recommendations: unseen, profile, preferences });
 
   return new RecommendationQueue<RankedRecommendation>(ranked);
 };
