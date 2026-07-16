@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
+import { getSavedCount, saveRecommendation } from '../../modules/history';
+import type { RankedRecommendation } from '../../modules/ranking';
 import { getPrimaryGenre, loadRecommendationQueue, RecommendationQueue } from '../../modules/recommendations';
-import type { Recommendation } from '../../modules/recommendations';
 import { useAuth } from '../auth/AuthContext';
 import { ActionBar } from './components/ActionBar';
 import { DiscoveryCard } from './components/DiscoveryCard';
@@ -15,29 +16,42 @@ const ACTION_LABELS = {
 
 export const DiscoveryPage = () => {
   const { logout } = useAuth();
-  const [queue, setQueue] = useState<RecommendationQueue | null>(null);
-  const [current, setCurrent] = useState<Recommendation | null>(null);
+  const [queue, setQueue] = useState<RecommendationQueue<RankedRecommendation> | null>(null);
+  const [current, setCurrent] = useState<RankedRecommendation | null>(null);
+  const [savedCount, setSavedCount] = useState(0);
   const [lastAction, setLastAction] = useState<string | null>(null);
   const [whyOpen, setWhyOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const loaded = await loadRecommendationQueue();
+      const [loaded, savedTotal] = await Promise.all([loadRecommendationQueue(), getSavedCount()]);
       if (cancelled) return;
       setQueue(loaded);
       setCurrent(loaded.current());
+      setSavedCount(savedTotal);
     })();
     return () => {
       cancelled = true;
     };
   }, []);
 
-  const advance = (actionKey: keyof typeof ACTION_LABELS) => {
-    if (!queue) return;
+  const handleAction = async (actionKey: keyof typeof ACTION_LABELS) => {
+    if (!queue || !current) return;
+
+    let next: RankedRecommendation | null;
+    if (actionKey === 'save') {
+      await saveRecommendation(current);
+      queue.remove(current.id);
+      setSavedCount((count) => count + 1);
+      next = queue.current();
+    } else {
+      next = queue.advance();
+    }
+
     setLastAction(ACTION_LABELS[actionKey]);
     setWhyOpen(false);
-    setCurrent(queue.advance());
+    setCurrent(next);
   };
 
   if (!queue) {
@@ -62,9 +76,12 @@ export const DiscoveryPage = () => {
             Ny musik fra din recommendation-kø — ikke dit eget bibliotek.
           </p>
         </div>
-        <button type="button" onClick={logout}>
-          Log ud
-        </button>
+        <div className="discovery__header-actions">
+          <span className="discovery__saved-count">❤️ {savedCount} gemt</span>
+          <button type="button" onClick={logout}>
+            Log ud
+          </button>
+        </div>
       </header>
 
       {lastAction && <p className="discovery__last-action">Sidste handling: {lastAction}</p>}
@@ -72,14 +89,14 @@ export const DiscoveryPage = () => {
       <DiscoveryCard track={current.track} genre={getPrimaryGenre(current)} />
 
       <ActionBar
-        onSave={() => advance('save')}
-        onReject={() => advance('reject')}
-        onKnown={() => advance('known')}
-        onNext={() => advance('next')}
+        onSave={() => void handleAction('save')}
+        onReject={() => void handleAction('reject')}
+        onKnown={() => void handleAction('known')}
+        onNext={() => void handleAction('next')}
         onWhy={() => setWhyOpen(true)}
       />
 
-      <WhyPanel open={whyOpen} onClose={() => setWhyOpen(false)} />
+      <WhyPanel open={whyOpen} onClose={() => setWhyOpen(false)} explanations={current.explanations} />
     </div>
   );
 };

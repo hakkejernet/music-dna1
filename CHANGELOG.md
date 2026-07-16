@@ -1,5 +1,34 @@
 # Changelog
 
+## To produktfejl lukket: Gem virker, "Hvorfor denne?" viser rigtige forklaringer
+
+Lukker de to huller `docs/mvp.md` fandt ved gennemgang af koden. Ingen nye
+providers, ingen AI, ingen nye API-kald, ingen ændrede ranking-regler.
+
+- **❤️ Gem virker nu rent faktisk.** Nyt modul `modules/history/`
+  (IndexedDB, egen `music-dna-history`-database) persisterer den fulde
+  `RankedRecommendation` lokalt når brugeren gemmer. Sangen fjernes med
+  det samme fra `RecommendationQueue` (ny `remove(id)`-metode), så den
+  aldrig vises igen i den aktuelle session. `loadRecommendationQueue()`
+  filtrerer desuden allerede-gemte track-ID'er fra ved hver ny
+  indlæsning, så en gemt sang heller ikke dukker op igen i en senere
+  session. Statistikken ("❤️ X gemt") i Discovery-headeren opdateres
+  med det samme og reflekterer det reelle, persisterede antal.
+- **"Hvorfor denne?" viser nu de rigtige `explanations`** som
+  `SimpleRanker` allerede beregnede for den aktuelle anbefaling — ikke
+  længere en hardkodet placeholder-liste. Er `explanations` tom, vises
+  en pæn fallback-besked i stedet.
+- `RecommendationQueue` er gjort generisk
+  (`RecommendationQueue<T extends Recommendation>`), så
+  `RankedRecommendation`s felter (`finalScore`, `explanations`) er
+  tilgængelige med fuld type-sikkerhed helt ud i `DiscoveryPage` — uden
+  cast eller `any`.
+- Verificeret end-to-end: gemte en sang, så tælleren gå fra 0→1, så
+  IndexedDB rent faktisk indeholdt snapshottet (med `finalScore` og
+  `explanations`), reloadede hele appen, og bekræftede at den gemte sang
+  ikke dukkede op igen i en ny, frisk queue.
+- Build, typecheck og lint grønne.
+
 ## Recommendation Ranking Engine
 
 Nyt modul `modules/ranking/`. Det henter ikke musik — det rangerer kun

@@ -1,4 +1,5 @@
-import { SimpleRanker } from '../ranking';
+import { getSavedTrackIds } from '../history';
+import { SimpleRanker, type RankedRecommendation } from '../ranking';
 import { createMockRecommendations } from './mockData';
 import { getConfiguredProviders } from './providerConfig';
 import { RecommendationQueue } from './recommendationQueue';
@@ -34,12 +35,12 @@ const ranker = new SimpleRanker();
  * whatever they return — no fusion across sources yet. A provider that
  * throws is treated as contributing nothing, not as a fatal error. If
  * every provider comes back empty, this falls back to the existing mock
- * recommendations. Whatever the source, the batch is always run through
- * SimpleRanker before it reaches the queue, so RecommendationQueue holds
- * RankedRecommendation objects (still structurally Recommendation, so
- * nothing downstream needs to change).
+ * recommendations. Already-saved tracks (see modules/history) are filtered
+ * out so a song the user saved once never resurfaces in a later session.
+ * Whatever's left is run through SimpleRanker before it reaches the queue,
+ * so RecommendationQueue holds RankedRecommendation objects.
  */
-export const loadRecommendationQueue = async (): Promise<RecommendationQueue> => {
+export const loadRecommendationQueue = async (): Promise<RecommendationQueue<RankedRecommendation>> => {
   const profile = await buildProfileSafely();
   const providers = getConfiguredProviders();
 
@@ -52,7 +53,11 @@ export const loadRecommendationQueue = async (): Promise<RecommendationQueue> =>
   });
 
   const batch = recommendations.length > 0 ? recommendations : createMockRecommendations();
-  const ranked = ranker.rank({ recommendations: batch, profile });
 
-  return new RecommendationQueue(ranked);
+  const savedTrackIds = await getSavedTrackIds();
+  const unseen = batch.filter((recommendation) => !savedTrackIds.has(recommendation.track.id));
+
+  const ranked = ranker.rank({ recommendations: unseen, profile });
+
+  return new RecommendationQueue<RankedRecommendation>(ranked);
 };

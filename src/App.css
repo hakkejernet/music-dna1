@@ -385,7 +385,21 @@
   margin-top: 4px;
 }
 
-.discovery__header button {
+.discovery__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.discovery__saved-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-h);
+  white-space: nowrap;
+}
+
+.discovery__header-actions button {
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text-h);
@@ -563,7 +577,7 @@
   font-size: 14px;
 }
 
-.why-panel__disclaimer {
+.why-panel__empty {
   color: var(--text-muted);
   font-size: 13px;
 }

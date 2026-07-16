@@ -14,9 +14,7 @@ alt sammen lokalt i din browser.
 - [x] Gem metadata lokalt (IndexedDB)
 - [x] Music DNA-dashboard (nu på `/music-dna`)
 - [x] Discovery-side (forsiden, `/`) — viser én sang ad gangen med
-      Gem/Afvis/Kendte allerede/Næste og et "Hvorfor denne?"-panel med
-      placeholder-grunde. **Ren UI** — ingen anbefalings-algoritme, ingen
-      AI, ingen ny API-logik endnu.
+      Gem/Afvis/Kendte allerede/Næste og et "Hvorfor denne?"-panel.
 - [x] `RecommendationQueue`-arkitektur — Discovery læser fra en separat
       anbefalings-kø (i dag fyldt med mock-data), ikke fra brugerens eget
       bibliotek. Klar til at modtage en rigtig kilde senere.
@@ -32,8 +30,12 @@ alt sammen lokalt i din browser.
       regelbaseret (ny kunstner / genre-match / allerede i bibliotek /
       flere-kilder-enige), ingen AI. Fuldstændig uafhængig af enhver
       provider. `RecommendationQueue` modtager nu `RankedRecommendation`
-      med `finalScore` og `explanations`, klar til en fremtidig
-      "Hvorfor anbefales denne?"-UI.
+      med `finalScore` og `explanations`.
+- [x] **Gem virker.** `modules/history/` gemmer den fulde anbefaling
+      lokalt (IndexedDB), fjerner den øjeblikkeligt fra køen, og
+      udelukker den fra alle fremtidige sessioner. "Hvorfor denne?"
+      viser nu de rigtige `explanations` fra `SimpleRanker` i stedet for
+      placeholder-tekst.
 
 Ingen rigtige anbefalinger endnu — det kommer i en senere version. Se
 [CHANGELOG.md](./CHANGELOG.md) for detaljer pr. opgave.
@@ -80,6 +82,8 @@ src/
     ranking/    — RecommendationRanker-interface + SimpleRanker.
                   Rangerer, henter aldrig musik. Uafhængig af enhver
                   provider — kender kun Recommendation/UserProfile-typerne.
+    history/    — RecommendationHistory (IndexedDB): gemte anbefalinger,
+                  bruges til at fjerne dem fra fremtidige queues
   features/
     auth/       — login-skærm, OAuth-callback, auth-context
     discovery/  — Discovery-side (forsiden): ét sang-kort ad gangen,

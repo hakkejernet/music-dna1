@@ -1,16 +1,10 @@
-const PLACEHOLDER_REASONS = [
-  'Matcher din musiksmag',
-  'Ligner sange i din playlist',
-  'Samme genre',
-  'Samme stemning',
-];
-
 interface Props {
   open: boolean;
   onClose: () => void;
+  explanations: string[];
 }
 
-export const WhyPanel = ({ open, onClose }: Props) => {
+export const WhyPanel = ({ open, onClose, explanations }: Props) => {
   if (!open) return null;
 
   return (
@@ -22,14 +16,15 @@ export const WhyPanel = ({ open, onClose }: Props) => {
             ✕
           </button>
         </div>
-        <p className="why-panel__disclaimer">
-          Der er endnu ingen rigtig anbefalings-analyse — dette er placeholder-grunde.
-        </p>
-        <ul className="why-panel__reasons">
-          {PLACEHOLDER_REASONS.map((reason) => (
-            <li key={reason}>{reason}</li>
-          ))}
-        </ul>
+        {explanations.length === 0 ? (
+          <p className="why-panel__empty">Ingen forklaring tilgængelig for denne anbefaling endnu.</p>
+        ) : (
+          <ul className="why-panel__reasons">
+            {explanations.map((explanation) => (
+              <li key={explanation}>{explanation}</li>
+            ))}
+          </ul>
+        )}
       </aside>
     </div>
   );
