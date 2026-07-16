@@ -6,15 +6,20 @@ Verdens bedste musik-discovery-værktøj — under opbygning.
 med Spotify, analysér dine playlister, og se dit personlige "Music DNA" —
 alt sammen lokalt i din browser.
 
-## v0.1 omfang
+## Omfang
 
 - [x] Login med Spotify (OAuth Authorization Code + PKCE)
 - [x] Hent brugerens playlists og alle sange heri
 - [x] Analysér sangene (genre, årti, popularitet, explicit, kunstner-diversitet)
 - [x] Gem metadata lokalt (IndexedDB)
-- [x] Music DNA-dashboard
+- [x] Music DNA-dashboard (nu på `/music-dna`)
+- [x] Discovery-side (forsiden, `/`) — viser én sang ad gangen med
+      Gem/Afvis/Kendte allerede/Næste og et "Hvorfor denne?"-panel med
+      placeholder-grunde. **Ren UI** — ingen anbefalings-algoritme, ingen
+      AI, ingen ny API-logik endnu.
 
-Ingen anbefalinger endnu — det kommer i en senere version.
+Ingen rigtige anbefalinger endnu — det kommer i en senere version. Se
+[CHANGELOG.md](./CHANGELOG.md) for detaljer pr. opgave.
 
 ### Vigtigt: ingen audio-features i v0.1
 
@@ -44,8 +49,10 @@ src/
     analysis/   — beregner Music DNA ud fra lokalt gemt data
   features/
     auth/       — login-skærm, OAuth-callback, auth-context
-    dashboard/  — Music DNA-dashboard og undervisualiseringer
-  lib/          — PKCE-hjælpere, env-håndtering, formatering
+    discovery/  — Discovery-side (forsiden): ét sang-kort ad gangen
+    dashboard/  — Music DNA-dashboard (/music-dna) og undervisualiseringer
+    shell/      — app-nav til at skifte mellem Discovery og Music DNA
+  lib/          — PKCE-hjælpere, env-håndtering, formatering, shuffle
 ```
 
 Hver fremtidig kilde (Last.fm, MusicBrainz, ...) får sit eget modul under
