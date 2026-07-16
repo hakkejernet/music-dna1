@@ -61,20 +61,15 @@ const MOCK_REASON_SETS: string[][] = [
 /** Builds a fresh, shuffled batch of mock recommendations. No real scoring yet. */
 export const createMockRecommendations = (): Recommendation[] =>
   shuffle(
-    MOCK_TRACKS.map((track, index) => ({
-      id: `rec-${track.id}`,
-      track,
-      source: 'mock-seed',
-      score: Number((0.9 - index * 0.08).toFixed(2)),
-      reasons: MOCK_REASON_SETS[index % MOCK_REASON_SETS.length],
-    })),
+    MOCK_TRACKS.map((track, index) => {
+      const genre = MOCK_GENRES[track.artists[0]?.id ?? ''];
+      return {
+        id: `rec-${track.id}`,
+        track,
+        source: 'mock-seed',
+        score: Number((0.9 - index * 0.08).toFixed(2)),
+        reasons: MOCK_REASON_SETS[index % MOCK_REASON_SETS.length],
+        genres: genre ? [genre] : [],
+      };
+    }),
   );
-
-/** Mock-only helper: real recommendations will carry genre info from their source. */
-export const getPrimaryGenre = (recommendation: Recommendation): string | null => {
-  for (const artist of recommendation.track.artists) {
-    const genre = MOCK_GENRES[artist.id];
-    if (genre) return genre;
-  }
-  return null;
-};

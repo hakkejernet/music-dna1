@@ -1,5 +1,48 @@
 # Changelog
 
+## Recommendation Ranking Engine
+
+Nyt modul `modules/ranking/`. Det henter ikke musik — det rangerer kun
+det, det får. Fuldstændig uafhængigt af Spotify, Last.fm og fremtidige
+providers (importerer kun de delte `Recommendation`/`UserProfile`-typer,
+aldrig en providers implementering).
+
+- `RankingInput { recommendations: Recommendation[]; profile: UserProfile }`,
+  `RankedRecommendation extends Recommendation` (tilføjer `finalScore`
+  og `explanations`), og `RecommendationRanker`-interfacet, præcis som
+  specificeret
+- `SimpleRanker`: rent regelbaseret, ingen AI/ML, ingen netværks- eller
+  storage-adgang i selve rankeren. Fire regler:
+  - `+20` hvis ingen af sangens kunstnere findes i biblioteket → "Ny kunstner"
+  - `+10` hvis en af sangens genrer matcher brugerens favoritgenrer → "Matcher dine favoritgenrer"
+  - `-30` hvis sangen allerede findes i biblioteket → "Allerede i dit bibliotek" (ellers "Ikke fundet i dit bibliotek")
+  - `+5` placeholder for fremtidig fusion — slår kun til hvis to
+    providers i samme batch reelt anbefaler den samme sang → "Flere
+    kilder er enige om denne sang"
+- `Recommendation` har fået et `genres: string[]`-felt (provider-leveret,
+  tomt hvis kilden ikke kan levere det) og `UserProfile` har fået
+  `libraryArtistIds`/`libraryTrackIds`, hentet lokalt fra IndexedDB —
+  ingen nye API-kald
+- `getPrimaryGenre()` er forenklet til bare at læse `recommendation.genres[0]`
+  i stedet for en mock-specifik kunstner-ID-opslagstabel
+- `loadRecommendationQueue()` kører nu `SimpleRanker.rank(...)` på
+  batchen (rigtig eller mock-fallback) før `RecommendationQueue`
+  bygges — køen modtager `RankedRecommendation` i stedet for rå
+  `Recommendation`
+- **Fejlrettelse undervejs**: `buildUserProfile()` brugte ét fælles
+  `Promise.all` til både Spotify-kald og lokale storage-opslag, så en
+  fejlende Spotify-session slettede allerede-synkroniserede
+  biblioteksdata og gjorde ranking-reglerne forkerte. Isoleret Spotify-
+  delen i sin egen try/catch, så biblioteksdata altid bevares uanset
+  Spotify-status
+- `DiscoveryPage` er **100 % uændret** — ingen diff i filen overhovedet
+- Verificeret: seedede et lokalt bibliotek hvor én sang og dens
+  kunstner allerede var kendt — den sang endte korrekt sidst i køen
+  (score -30), mens to helt nye sange (score +20) endte først, med
+  Spotify-sessionen bevidst fejlende under hele testen
+- Ingen AI, ingen machine learning, ingen nye API-kald
+- Build, typecheck og lint grønne
+
 ## LastFmRecommendationProvider + provider-konfiguration
 
 Arkitektur-skift: Spotify er ikke længere recommendation-motoren.

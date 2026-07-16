@@ -33,6 +33,10 @@ export class SpotifyRecommendationProvider implements RecommendationProvider {
         source: 'spotify',
         score: Number((1 - index / Math.max(tracks.length, 1)).toFixed(2)),
         reasons: ['Anbefalet af Spotify baseret på dine top-kunstnere'],
+        // Spotify's /recommendations response doesn't include genre (that
+        // lives on the artist) — leaving this empty avoids a second API
+        // call just to look it up.
+        genres: [],
       }));
     } catch (error) {
       console.warn(

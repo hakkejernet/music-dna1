@@ -41,6 +41,10 @@ const MOCK_TRACKS: SpotifyTrack[] = [
   mkTrack('lfm-4', 'Tin Roof Weather', 'Panelbeater', 'Tin Roof Weather EP', '2025-04-16', 189000, 15),
 ];
 
+// Parallel to MOCK_TRACKS — Last.fm's real API reports genres as "tags" on
+// the track/artist, which is what this stands in for.
+const MOCK_GENRES: string[] = ['shoegaze', 'math rock', 'afrobeat', 'trip hop'];
+
 const MOCK_REASON_SETS: string[][] = [
   ['Populær blandt lyttere med lignende smag på Last.fm'],
   ['Scrobbles overlapper med kunstnere du lytter til'],
@@ -61,6 +65,7 @@ export class LastFmRecommendationProvider implements RecommendationProvider {
         source: 'lastfm-mock',
         score: Number((0.8 - index * 0.1).toFixed(2)),
         reasons: MOCK_REASON_SETS[index % MOCK_REASON_SETS.length],
+        genres: [MOCK_GENRES[index % MOCK_GENRES.length]],
       })),
     );
   }

@@ -27,6 +27,13 @@ alt sammen lokalt i din browser.
       arkitektur-skiftet væk fra Spotify som recommendation-motor.
       Mock-data indtil videre, fuldstændig uafhængig af Spotify.
       `providerConfig.ts` styrer hvilke providers der er aktive.
+- [x] `modules/ranking/` — Recommendation Ranking Engine. Henter ikke
+      musik, rangerer kun det providers har fundet. `SimpleRanker` er
+      regelbaseret (ny kunstner / genre-match / allerede i bibliotek /
+      flere-kilder-enige), ingen AI. Fuldstændig uafhængig af enhver
+      provider. `RecommendationQueue` modtager nu `RankedRecommendation`
+      med `finalScore` og `explanations`, klar til en fremtidig
+      "Hvorfor anbefales denne?"-UI.
 
 Ingen rigtige anbefalinger endnu — det kommer i en senere version. Se
 [CHANGELOG.md](./CHANGELOG.md) for detaljer pr. opgave.
@@ -70,6 +77,9 @@ src/
                         providerConfig.ts (aktive providers),
                         LastFmRecommendationProvider (aktiv, mock),
                         SpotifyRecommendationProvider (deprecated)
+    ranking/    — RecommendationRanker-interface + SimpleRanker.
+                  Rangerer, henter aldrig musik. Uafhængig af enhver
+                  provider — kender kun Recommendation/UserProfile-typerne.
   features/
     auth/       — login-skærm, OAuth-callback, auth-context
     discovery/  — Discovery-side (forsiden): ét sang-kort ad gangen,
