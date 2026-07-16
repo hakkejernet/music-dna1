@@ -42,6 +42,10 @@ alt sammen lokalt i din browser.
       foretrukne kunstnere/årtier). Kun lokal statistik, ingen AI, ingen
       caching. `SimpleRanker` bruger nu `PreferenceProfile` til 6 nye
       regler.
+- [x] Afvis-panel — vælg en årsag (8 muligheder) når du afviser en sang,
+      eller luk/vent og få en almindelig afvisning. Årsagen gemmes lokalt
+      og fodrer `PreferenceProfile.topRejectionReasons` (endnu ikke brugt
+      af ranking).
 
 Se [CHANGELOG.md](./CHANGELOG.md) for detaljer pr. opgave, inkl. kendte
 API-begrænsninger i Last.fm-integrationen.

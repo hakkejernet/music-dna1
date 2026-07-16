@@ -10,6 +10,7 @@ const MAX_AVOIDED_GENRES = 5;
 const MAX_FAVORITE_ARTISTS = 20;
 const MAX_FAVORITE_DECADES = 3;
 const MAX_SOURCES = 3;
+const MAX_REJECTION_REASONS = 5;
 
 const EMPTY_PROFILE: PreferenceProfile = {
   favoriteGenres: [],
@@ -18,6 +19,7 @@ const EMPTY_PROFILE: PreferenceProfile = {
   favoriteDecades: [],
   favoriteSources: [],
   avoidedSources: [],
+  topRejectionReasons: [],
 };
 
 const countBy = <T>(items: T[], toKeys: (item: T) => string[]): Map<string, number> => {
@@ -70,6 +72,8 @@ export const buildPreferenceProfile = async (): Promise<PreferenceProfile> => {
     });
     const savedSourceCounts = countBy(saved, (record) => [record.recommendation.source]);
     const rejectedSourceCounts = countBy(rejected, (record) => [record.recommendation.source]);
+    // A single explicit reason pick is a strong, unambiguous signal — no minimum count.
+    const rejectionReasonCounts = countBy(rejected, (record) => (record.reason ? [record.reason] : []));
 
     return {
       favoriteGenres: topKeys(savedGenreCounts, MIN_GENRE_COUNT, MAX_FAVORITE_GENRES),
@@ -78,6 +82,7 @@ export const buildPreferenceProfile = async (): Promise<PreferenceProfile> => {
       favoriteDecades: topKeys(savedDecadeCounts, MIN_DECADE_COUNT, MAX_FAVORITE_DECADES),
       favoriteSources: topKeys(savedSourceCounts, MIN_SOURCE_COUNT, MAX_SOURCES),
       avoidedSources: topKeys(rejectedSourceCounts, MIN_SOURCE_COUNT, MAX_SOURCES),
+      topRejectionReasons: topKeys(rejectionReasonCounts, 1, MAX_REJECTION_REASONS),
     };
   } catch (error) {
     console.warn('[preferences] Kunne ikke beregne PreferenceProfile, fortsætter uden:', error);

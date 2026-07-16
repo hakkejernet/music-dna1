@@ -14,13 +14,17 @@ export const saveRecommendation = async (recommendation: RankedRecommendation): 
 };
 
 /** Persists a rejected recommendation locally — feeds modules/preferences, doesn't affect the current queue. */
-export const rejectRecommendation = async (recommendation: RankedRecommendation): Promise<void> => {
+export const rejectRecommendation = async (
+  recommendation: RankedRecommendation,
+  reason: string | null = null,
+): Promise<void> => {
   const db = await getHistoryDb();
   await db.put('rejected', {
     id: recommendation.id,
     trackId: recommendation.track.id,
     recommendation,
     rejectedAt: Date.now(),
+    reason,
   });
 };
 

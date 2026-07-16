@@ -13,6 +13,8 @@ export interface RejectedRecommendation {
   trackId: string;
   recommendation: RankedRecommendation;
   rejectedAt: number;
+  /** Reason picked in the reject panel, if any — null for a plain/timed-out rejection. */
+  reason: string | null;
 }
 
 export interface HistoryDb extends DBSchema {

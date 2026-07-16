@@ -16,4 +16,10 @@ export interface PreferenceProfile {
   favoriteSources: string[];
   /** Recommendation sources that show up often among rejected recommendations. */
   avoidedSources: string[];
+  /**
+   * Reject-panel reasons the user picks most often, most frequent first
+   * (e.g. "For poppet", "Kan ikke lide vokalen"). Not used by SimpleRanker
+   * yet — infrastructure for a future rule.
+   */
+  topRejectionReasons: string[];
 }

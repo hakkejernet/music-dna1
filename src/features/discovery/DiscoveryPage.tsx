@@ -5,6 +5,7 @@ import { getPrimaryGenre, loadRecommendationQueue, RecommendationQueue } from '.
 import { useAuth } from '../auth/AuthContext';
 import { ActionBar } from './components/ActionBar';
 import { DiscoveryCard } from './components/DiscoveryCard';
+import { RejectReasonPanel } from './components/RejectReasonPanel';
 import { WhyPanel } from './components/WhyPanel';
 
 const ACTION_LABELS = {
@@ -14,6 +15,8 @@ const ACTION_LABELS = {
   next: 'Sprunget over ➡',
 } as const;
 
+type SimpleActionKey = 'save' | 'known' | 'next';
+
 export const DiscoveryPage = () => {
   const { logout } = useAuth();
   const [queue, setQueue] = useState<RecommendationQueue<RankedRecommendation> | null>(null);
@@ -21,6 +24,7 @@ export const DiscoveryPage = () => {
   const [savedCount, setSavedCount] = useState(0);
   const [lastAction, setLastAction] = useState<string | null>(null);
   const [whyOpen, setWhyOpen] = useState(false);
+  const [rejectPanelOpen, setRejectPanelOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -36,7 +40,13 @@ export const DiscoveryPage = () => {
     };
   }, []);
 
-  const handleAction = async (actionKey: keyof typeof ACTION_LABELS) => {
+  const finishAction = (actionKey: keyof typeof ACTION_LABELS, next: RankedRecommendation | null) => {
+    setLastAction(ACTION_LABELS[actionKey]);
+    setWhyOpen(false);
+    setCurrent(next);
+  };
+
+  const handleAction = async (actionKey: SimpleActionKey) => {
     if (!queue || !current) return;
 
     let next: RankedRecommendation | null;
@@ -46,15 +56,17 @@ export const DiscoveryPage = () => {
       setSavedCount((count) => count + 1);
       next = queue.current();
     } else {
-      if (actionKey === 'reject') {
-        await rejectRecommendation(current);
-      }
       next = queue.advance();
     }
 
-    setLastAction(ACTION_LABELS[actionKey]);
-    setWhyOpen(false);
-    setCurrent(next);
+    finishAction(actionKey, next);
+  };
+
+  const handleRejectResolved = async (reason: string | null) => {
+    setRejectPanelOpen(false);
+    if (!queue || !current) return;
+    await rejectRecommendation(current, reason);
+    finishAction('reject', queue.advance());
   };
 
   if (!queue) {
@@ -93,13 +105,14 @@ export const DiscoveryPage = () => {
 
       <ActionBar
         onSave={() => void handleAction('save')}
-        onReject={() => void handleAction('reject')}
+        onReject={() => setRejectPanelOpen(true)}
         onKnown={() => void handleAction('known')}
         onNext={() => void handleAction('next')}
         onWhy={() => setWhyOpen(true)}
       />
 
       <WhyPanel open={whyOpen} onClose={() => setWhyOpen(false)} explanations={current.explanations} />
+      <RejectReasonPanel open={rejectPanelOpen} onResolve={(reason) => void handleRejectResolved(reason)} />
     </div>
   );
 };

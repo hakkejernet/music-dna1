@@ -598,3 +598,72 @@
   padding: 10px 14px;
   border-radius: 10px;
 }
+
+/* Reject reason panel — a quick centered sheet, not a side drawer like WhyPanel */
+
+.reject-panel-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 8, 20, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 20;
+}
+
+.reject-panel {
+  width: 360px;
+  max-width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  box-shadow: var(--shadow);
+}
+
+.reject-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.reject-panel__header h3 {
+  font-size: 15px;
+}
+
+.reject-panel__close {
+  border: none;
+  background: var(--accent-bg);
+  color: var(--text-h);
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.reject-panel__reasons {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.reject-panel__reason {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-h);
+  font-size: 13px;
+  padding: 10px 8px;
+  border-radius: 10px;
+  text-align: center;
+  line-height: 1.3;
+}
+
+.reject-panel__reason:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}

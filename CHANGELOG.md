@@ -1,5 +1,33 @@
 # Changelog
 
+## Afvisningsårsager: bedre feedback-signal
+
+Sidste større feature før testfasen. Når brugeren trykker ❌ Afvis, åbnes nu
+et lille, hurtigt panel hvor de kan angive hvorfor. Kun infrastruktur —
+ingen nye ranking-regler, ingen AI.
+
+- Nyt `RejectReasonPanel`: 8 valgmuligheder (For poppet / For hård /
+  Forkert stemning / Kendte allerede sangen / Kan ikke lide kunstneren /
+  Kan ikke lide vokalen / Dårlig produktion / Andet). Ét tryk på en
+  årsag lukker panelet med det samme
+- Vælger brugeren intet inden for ~5 sekunder, eller trykker uden for
+  panelet, registreres en almindelig afvisning (ingen årsag) — afvisningen
+  sker under alle omstændigheder, panelet er en valgfri tilføjelse til den
+  allerede eksisterende afvis-handling, ikke en blokering af den
+- `RejectedRecommendation` (i `modules/history`) har fået et
+  `reason: string | null`-felt; `rejectRecommendation()` tager nu en
+  valgfri årsag
+- `PreferenceProfile` har fået `topRejectionReasons` — de hyppigst valgte
+  årsager, udregnet med samme rene tælle-logik som resten af profilen.
+  **Bruges endnu ikke af `SimpleRanker`** — kun infrastruktur til en
+  fremtidig regel
+- Verificeret alle fire flows med Playwright: (1) årsag valgt → persisteret
+  korrekt med årsagen, (2) klik udenfor panelet → persisteret med
+  `reason: null`, (3) ~5 sek. uden handling → auto-lukket, persisteret med
+  `reason: null`, (4) panelets DOM-struktur/opførsel matcher skærmbillede
+- Ingen AI, ingen ændrede ranking-regler, ingen andre features
+- Build, typecheck og lint grønne
+
 ## PreferenceProfile: ranking lærer af gemte/afviste anbefalinger
 
 Recommendation Engine begynder at lære af brugerens feedback — stadig ingen
