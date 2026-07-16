@@ -26,14 +26,14 @@ export class RecommendationQueue<T extends Recommendation = Recommendation> {
     return this.items.length === 0;
   }
 
+  /** Null once every recommendation in this batch has been shown — the browsing session has ended, it doesn't loop back to the start. */
   current(): T | null {
-    if (this.isEmpty()) return null;
-    return this.items[this.cursor % this.items.length];
+    return this.items[this.cursor] ?? null;
   }
 
+  /** Moves to the next recommendation. Never wraps back to the start — once the last item has been shown, current() returns null instead of repeating earlier ones. */
   advance(): T | null {
-    if (this.isEmpty()) return null;
-    this.cursor = (this.cursor + 1) % this.items.length;
+    this.cursor += 1;
     return this.current();
   }
 
@@ -50,7 +50,6 @@ export class RecommendationQueue<T extends Recommendation = Recommendation> {
     if (index < this.cursor) {
       this.cursor -= 1;
     }
-    this.cursor = this.items.length === 0 ? 0 : this.cursor % this.items.length;
   }
 
   toArray(): T[] {

@@ -1,5 +1,34 @@
 # Changelog
 
+## Kritisk bugfix: Discovery-køen var cyklisk
+
+Discovery viste kun de samme 5-6 sange i en uendelig ring. Root cause var
+i `RecommendationQueue` (`modules/recommendations/recommendationQueue.ts`):
+`current()` og `advance()` brugte `cursor % items.length`, så cursoren
+wrappede tilbage til index 0 i stedet for at stoppe, når brugeren nåede
+sidste sang i køen — uanset om køen indeholdt 6 eller 70 anbefalinger.
+Ingen af de andre lag i flowet (Last.fm-provider, ranking, dedup) var
+involveret i selve buggen.
+
+- **Fix**: `advance()` inkrementerer nu cursoren uden modulo, og
+  `current()` returnerer `null` når cursoren er forbi sidste element —
+  Discovery viser da sin eksisterende "ingen anbefalinger"-skærm i stedet
+  for at gentage tidligere sange. Køen bladres nu lineært igennem, aldrig
+  i ring.
+- `remove()` (kaldes ved Gem) er uændret i adfærd — fjernede stadig kun
+  den unødvendige `% items.length`-normalisering af cursoren i slutningen,
+  som hørte til den gamle cykliske logik.
+- Verificeret med en midlertidig Playwright-harness: tvang alle providers
+  til at fejle (så den faste 6-track mock-batch bruges deterministisk),
+  bladrede 6 gange igennem og bekræftede 6 forskellige sange uden gentagelse,
+  og at et 7. "Næste"-klik viser tom-tilstanden i stedet for at wrappe
+  tilbage til sang #1. Scriptet er fjernet igen efter verifikation.
+- Ingen ændring af hvornår mock-data bruges: `loadRecommendationQueue()`
+  faldt allerede kun tilbage til mock, hvis alle konfigurerede providers
+  tilsammen returnerede 0 anbefalinger (uændret, bekræftet i denne
+  undersøgelse — se teknisk rapport i commit-beskeden).
+- Ingen nye features — kun denne fejl rettet.
+
 ## "Åbn i Spotify" — ét klik fra anbefaling til lyt
 
 Højeste prioritet: Discovery havde for meget friktion, fordi
