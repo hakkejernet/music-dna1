@@ -1,5 +1,37 @@
 # Changelog
 
+## SpotifyRecommendationProvider
+
+RecommendationQueue har fået sin første rigtige provider — stadig ingen
+AI, ingen Last.fm, ingen fallback-algoritmer, kun Spotify.
+
+- Nyt `RecommendationProvider`-interface (`getRecommendations(user):
+  Promise<Recommendation[]>`) i `modules/recommendations/types.ts`,
+  sammen med et `UserProfile`-taste-signal (`seedArtistIds`,
+  `seedTrackIds`, `seedGenres`)
+- `SpotifyRecommendationProvider` implementerer interfacet: kalder
+  Spotifys `/recommendations`-endpoint med seeds fra brugerens
+  top-kunstnere. **Fanger alle fejl og returnerer altid `[]` i stedet
+  for at kaste** — Spotify lukkede `/recommendations` for nye apps i
+  nov. 2024 (samme begrænsning som audio-features), så et 403/404 her
+  er en forventet, ikke-fatal udfald. Fejlen logges tydeligt
+  (`console.warn`) med kontekst, så den er til at debugge
+- `buildUserProfile()` bygger `UserProfile` fra `/me/top/artists`
+  (ikke begrænset) — ny hjælpefunktion, ingen ændring i eksisterende
+  Spotify-endpoints ud over tilføjelsen af `getTopArtists` og
+  `getRecommendedTracks`
+- `loadRecommendationQueue()` er det eneste, `DiscoveryPage` kender:
+  den prøver Spotify-provideren først, og falder automatisk tilbage
+  til `createMockRecommendations()` hvis listen er tom (uanset årsag —
+  API-begrænsning, netværksfejl, eller ingen seeds). Mock-systemet
+  fungerer stadig uændret som fallback
+- `DiscoveryPage` importerer aldrig `SpotifyRecommendationProvider`
+  direkte — kun `RecommendationQueue` og `loadRecommendationQueue`
+- Verificeret end-to-end: med en session uden gyldigt Spotify-login
+  fejler Spotify-kaldet rent, bliver fanget og logget, og Discovery
+  falder automatisk tilbage til mock-anbefalinger uden at crashe
+- Build, typecheck og lint grønne
+
 ## RecommendationQueue-arkitektur
 
 Discovery viser ikke længere sange fra brugerens eget bibliotek — det

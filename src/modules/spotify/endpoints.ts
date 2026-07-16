@@ -78,6 +78,44 @@ interface RawArtist {
 const mapImages = (images: RawImage[]): SpotifyImage[] =>
   images.map((image) => ({ url: image.url, width: image.width, height: image.height }));
 
+const mapArtist = (artist: RawArtist): SpotifyArtist => ({
+  id: artist.id,
+  name: artist.name,
+  genres: artist.genres,
+  popularity: artist.popularity,
+  followers: artist.followers.total,
+  images: mapImages(artist.images),
+});
+
+const mapArtistRefs = (artists: RawArtistRef[]): SpotifyArtistRef[] =>
+  artists.map((artist) => ({ id: artist.id, name: artist.name }));
+
+const mapTrack = (
+  track: RawTrack,
+  extra: { addedAt: string | null; playlistIds: string[] },
+): SpotifyTrack | null => {
+  // Skip local files, removed tracks, and podcast episodes — discovery is about songs.
+  if (!track.id || track.is_local || track.type !== 'track') return null;
+
+  return {
+    id: track.id,
+    name: track.name,
+    durationMs: track.duration_ms,
+    explicit: track.explicit,
+    popularity: track.popularity,
+    isrc: track.external_ids?.isrc ?? null,
+    previewUrl: track.preview_url,
+    albumId: track.album.id,
+    albumName: track.album.name,
+    albumImages: mapImages(track.album.images),
+    releaseDate: track.album.release_date,
+    releaseDatePrecision: track.album.release_date_precision,
+    artists: mapArtistRefs(track.artists),
+    addedAt: extra.addedAt,
+    playlistIds: extra.playlistIds,
+  };
+};
+
 const fetchAllPages = async <T>(firstPath: string): Promise<T[]> => {
   const items: T[] = [];
   let next: string | null = firstPath;
@@ -116,36 +154,15 @@ export const getUserPlaylists = async (): Promise<SpotifyPlaylist[]> => {
 const PLAYLIST_TRACK_FIELDS =
   'items(added_at,track(id,name,duration_ms,explicit,popularity,preview_url,external_ids,album(id,name,images,release_date,release_date_precision),artists(id,name),type,is_local)),next';
 
-const mapArtistRefs = (artists: RawArtistRef[]): SpotifyArtistRef[] =>
-  artists.map((artist) => ({ id: artist.id, name: artist.name }));
-
 export const getPlaylistTracks = async (playlistId: string): Promise<SpotifyTrack[]> => {
   const path = `/playlists/${playlistId}/tracks?limit=100&fields=${encodeURIComponent(PLAYLIST_TRACK_FIELDS)}`;
   const raw = await fetchAllPages<RawPlaylistItem>(path);
 
   const tracks: SpotifyTrack[] = [];
   for (const item of raw) {
-    const track = item.track;
-    // Skip local files, removed tracks, and podcast episodes — discovery is about songs.
-    if (!track || !track.id || track.is_local || track.type !== 'track') continue;
-
-    tracks.push({
-      id: track.id,
-      name: track.name,
-      durationMs: track.duration_ms,
-      explicit: track.explicit,
-      popularity: track.popularity,
-      isrc: track.external_ids?.isrc ?? null,
-      previewUrl: track.preview_url,
-      albumId: track.album.id,
-      albumName: track.album.name,
-      albumImages: mapImages(track.album.images),
-      releaseDate: track.album.release_date,
-      releaseDatePrecision: track.album.release_date_precision,
-      artists: mapArtistRefs(track.artists),
-      addedAt: item.added_at,
-      playlistIds: [playlistId],
-    });
+    if (!item.track) continue;
+    const track = mapTrack(item.track, { addedAt: item.added_at, playlistIds: [playlistId] });
+    if (track) tracks.push(track);
   }
   return tracks;
 };
@@ -159,17 +176,48 @@ export const getArtistsByIds = async (ids: string[]): Promise<SpotifyArtist[]> =
   for (let i = 0; i < uniqueIds.length; i += ARTIST_BATCH_SIZE) {
     const batch = uniqueIds.slice(i, i + ARTIST_BATCH_SIZE);
     const raw = await spotifyGet<{ artists: RawArtist[] }>(`/artists?ids=${batch.join(',')}`);
-    artists.push(
-      ...raw.artists.filter(Boolean).map((artist) => ({
-        id: artist.id,
-        name: artist.name,
-        genres: artist.genres,
-        popularity: artist.popularity,
-        followers: artist.followers.total,
-        images: mapImages(artist.images),
-      })),
-    );
+    artists.push(...raw.artists.filter(Boolean).map(mapArtist));
   }
 
   return artists;
+};
+
+export const getTopArtists = async (limit = 5): Promise<SpotifyArtist[]> => {
+  const raw = await spotifyGet<{ items: RawArtist[] }>(`/me/top/artists?limit=${limit}`);
+  return raw.items.map(mapArtist);
+};
+
+export interface RecommendationSeeds {
+  seedArtistIds: string[];
+  seedGenres: string[];
+  seedTrackIds: string[];
+  limit?: number;
+}
+
+// Spotify restricted /recommendations to apps with pre-approved "extended
+// quota mode" in Nov 2024 — new apps (like this one) typically get a 403/404
+// here. Callers are expected to handle that (see SpotifyRecommendationProvider).
+export const getRecommendedTracks = async (seeds: RecommendationSeeds): Promise<SpotifyTrack[]> => {
+  const params = new URLSearchParams();
+  let budget = 5; // Spotify allows at most 5 seeds total, across all three kinds.
+
+  const take = (key: string, values: string[]) => {
+    if (budget <= 0 || values.length === 0) return;
+    const slice = values.slice(0, budget);
+    params.set(key, slice.join(','));
+    budget -= slice.length;
+  };
+
+  take('seed_artists', seeds.seedArtistIds);
+  take('seed_genres', seeds.seedGenres);
+  take('seed_tracks', seeds.seedTrackIds);
+  params.set('limit', String(seeds.limit ?? 20));
+
+  const raw = await spotifyGet<{ tracks: RawTrack[] }>(`/recommendations?${params.toString()}`);
+  const tracks: SpotifyTrack[] = [];
+  for (const rawTrack of raw.tracks) {
+    const track = mapTrack(rawTrack, { addedAt: null, playlistIds: [] });
+    if (track) tracks.push(track);
+  }
+  return tracks;
 };

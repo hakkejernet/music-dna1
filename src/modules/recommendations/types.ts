@@ -7,3 +7,15 @@ export interface Recommendation {
   score: number;
   reasons: string[];
 }
+
+/** Taste signal handed to a RecommendationProvider — not the full Spotify user object. */
+export interface UserProfile {
+  userId: string;
+  seedArtistIds: string[];
+  seedTrackIds: string[];
+  seedGenres: string[];
+}
+
+export interface RecommendationProvider {
+  getRecommendations(user: UserProfile): Promise<Recommendation[]>;
+}

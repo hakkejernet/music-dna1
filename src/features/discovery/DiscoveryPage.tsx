@@ -1,5 +1,6 @@
-import { useState } from 'react';
-import { createMockRecommendations, getPrimaryGenre, RecommendationQueue } from '../../modules/recommendations';
+import { useEffect, useState } from 'react';
+import { getPrimaryGenre, loadRecommendationQueue, RecommendationQueue } from '../../modules/recommendations';
+import type { Recommendation } from '../../modules/recommendations';
 import { useAuth } from '../auth/AuthContext';
 import { ActionBar } from './components/ActionBar';
 import { DiscoveryCard } from './components/DiscoveryCard';
@@ -14,16 +15,34 @@ const ACTION_LABELS = {
 
 export const DiscoveryPage = () => {
   const { logout } = useAuth();
-  const [queue] = useState(() => new RecommendationQueue(createMockRecommendations()));
-  const [current, setCurrent] = useState(() => queue.current());
+  const [queue, setQueue] = useState<RecommendationQueue | null>(null);
+  const [current, setCurrent] = useState<Recommendation | null>(null);
   const [lastAction, setLastAction] = useState<string | null>(null);
   const [whyOpen, setWhyOpen] = useState(false);
 
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const loaded = await loadRecommendationQueue();
+      if (cancelled) return;
+      setQueue(loaded);
+      setCurrent(loaded.current());
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const advance = (actionKey: keyof typeof ACTION_LABELS) => {
+    if (!queue) return;
     setLastAction(ACTION_LABELS[actionKey]);
     setWhyOpen(false);
     setCurrent(queue.advance());
   };
+
+  if (!queue) {
+    return <div className="dashboard-status">Finder ny musik til dig...</div>;
+  }
 
   if (queue.isEmpty() || !current) {
     return (
