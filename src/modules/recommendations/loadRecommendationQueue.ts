@@ -1,3 +1,4 @@
+import { getRecommendationDiagnostics, resetRecommendationDiagnostics, updateRecommendationDiagnostics } from '../diagnostics';
 import { getSavedTrackIds } from '../history';
 import { buildPreferenceProfile } from '../preferences';
 import { SimpleRanker, type RankedRecommendation } from '../ranking';
@@ -31,6 +32,21 @@ const buildProfileSafely = async (): Promise<UserProfile> => {
 
 const ranker = new SimpleRanker();
 
+/** Priority-ordered — matches the exact categories the DebugPanel shows. Only called once mock was actually used. */
+const determineFallbackReason = (): string => {
+  const diagnostics = getRecommendationDiagnostics();
+  if (!diagnostics.spotify.topArtistsFound) {
+    return 'Ingen Spotify top artists';
+  }
+  if (!diagnostics.lastfm.apiKeyPresent) {
+    return 'Last.fm API key mangler';
+  }
+  if (diagnostics.lastfm.error) {
+    return diagnostics.lastfm.error;
+  }
+  return '0 recommendations';
+};
+
 /**
  * Single entry point Discovery uses to get a filled RecommendationQueue.
  * Runs every configured provider (see providerConfig.ts) and concatenates
@@ -45,6 +61,8 @@ const ranker = new SimpleRanker();
  * RecommendationQueue holds RankedRecommendation objects.
  */
 export const loadRecommendationQueue = async (): Promise<RecommendationQueue<RankedRecommendation>> => {
+  resetRecommendationDiagnostics();
+
   const profile = await buildProfileSafely();
   const providers = getConfiguredProviders();
 
@@ -63,6 +81,12 @@ export const loadRecommendationQueue = async (): Promise<RecommendationQueue<Ran
 
   const preferences = await buildPreferenceProfile();
   const ranked = ranker.rank({ recommendations: unseen, profile, preferences });
+
+  const usedMock = recommendations.length === 0;
+  updateRecommendationDiagnostics({
+    queue: { count: ranked.length, source: usedMock ? 'mock' : 'lastfm' },
+    fallbackReason: usedMock ? determineFallbackReason() : null,
+  });
 
   return new RecommendationQueue<RankedRecommendation>(ranked);
 };

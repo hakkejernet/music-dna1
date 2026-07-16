@@ -1,5 +1,35 @@
 # Changelog
 
+## Debug-panel: diagnosticér recommendation-flowet på 10 sekunder
+
+Rent diagnostik-værktøj, kun til udvikling — ingen ny produktfunktionalitet.
+Formålet er at stoppe med at gætte hvorfor Last.fm ikke leverer
+anbefalinger: en 🐛 Debug-knap (kun synlig når `import.meta.env.DEV`, altså
+aldrig i production-builden på GitHub Pages) åbner et panel der viser
+præcis hvad der skete i det seneste `loadRecommendationQueue()`-kald.
+
+- Nyt modul `modules/diagnostics/` — et simpelt, ikke-persisteret snapshot
+  (`RecommendationDiagnostics`) der nulstilles ved hver queue-load og
+  udfyldes undervejs af pipelinens eksisterende trin. Rent observerende:
+  ændrer intet ved den faktiske resilient skip-and-continue-adfærd.
+- **Spotify**: login OK/fejlet, antal top-artists fundet.
+- **Last.fm**: API key fundet (Ja/Nej, uden at trigge den kastende
+  `env.lastfmApiKey`-getter), API-kald udført, antal lignende kunstnere,
+  antal top tracks, antal recommendations bygget.
+- **Queue**: endeligt antal recommendations og kilde (Last.fm/Mock).
+- **Fallback årsag** (kun når mock bruges) — præcis kategori i
+  prioriteret rækkefølge: "Ingen Spotify top artists" → "Last.fm API key
+  mangler" → en klassificeret Last.fm-fejl ("Last.fm API fejl" / "Rate
+  limit" / "Network fejl" / "Parsing fejl") → "0 recommendations" som
+  sidste udvej.
+- Verificeret med en midlertidig Playwright-harness på tværs af fire
+  scenarier (fuldt succesfuldt flow med korrekte tal, ingen Spotify
+  top-artists, Last.fm-netværksfejl, manglende Last.fm API-nøgle) — 21/21
+  checks bestod, inkl. at panelet rammer den rigtige fallback-årsag i
+  hvert tilfælde. Scriptene er fjernet igen efter verifikation.
+- Ingen ændringer til selve recommendation-logikken eller UI'et for
+  almindelige brugere.
+
 ## Kritisk bugfix: Discovery-køen var cyklisk
 
 Discovery viste kun de samme 5-6 sange i en uendelig ring. Root cause var

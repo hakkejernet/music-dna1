@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
+import { getRecommendationDiagnostics, type RecommendationDiagnostics } from '../../modules/diagnostics';
 import { getSavedCount, rejectRecommendation, saveRecommendation } from '../../modules/history';
 import type { RankedRecommendation } from '../../modules/ranking';
 import { getPrimaryGenre, loadRecommendationQueue, RecommendationQueue } from '../../modules/recommendations';
 import { getInstantSpotifyUrl, resolveSpotifyTrackUrl } from '../../modules/spotifyLink';
 import { useAuth } from '../auth/AuthContext';
 import { ActionBar } from './components/ActionBar';
+import { DebugPanel } from './components/DebugPanel';
 import { DiscoveryCard } from './components/DiscoveryCard';
 import { OpenInSpotifyButton } from './components/OpenInSpotifyButton';
 import { RejectReasonPanel } from './components/RejectReasonPanel';
@@ -28,6 +30,8 @@ export const DiscoveryPage = () => {
   const [whyOpen, setWhyOpen] = useState(false);
   const [rejectPanelOpen, setRejectPanelOpen] = useState(false);
   const [spotifyUrl, setSpotifyUrl] = useState<string | null>(null);
+  const [diagnostics, setDiagnostics] = useState<RecommendationDiagnostics | null>(null);
+  const [debugOpen, setDebugOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -37,6 +41,7 @@ export const DiscoveryPage = () => {
       setQueue(loaded);
       setCurrent(loaded.current());
       setSavedCount(savedTotal);
+      setDiagnostics(getRecommendationDiagnostics());
     })();
     return () => {
       cancelled = true;
@@ -93,8 +98,25 @@ export const DiscoveryPage = () => {
     finishAction('reject', queue.advance());
   };
 
+  // Dev-only diagnostics — stripped from the production build. Not a
+  // product feature, just visibility into why the recommendation pipeline
+  // produced what it did.
+  const debugOverlay = import.meta.env.DEV && diagnostics && (
+    <>
+      <button type="button" className="debug-toggle" onClick={() => setDebugOpen(true)}>
+        🐛 Debug
+      </button>
+      <DebugPanel open={debugOpen} onClose={() => setDebugOpen(false)} diagnostics={diagnostics} />
+    </>
+  );
+
   if (!queue) {
-    return <div className="dashboard-status">Finder ny musik til dig...</div>;
+    return (
+      <div className="dashboard-status">
+        Finder ny musik til dig...
+        {debugOverlay}
+      </div>
+    );
   }
 
   if (queue.isEmpty() || !current) {
@@ -102,6 +124,7 @@ export const DiscoveryPage = () => {
       <div className="dashboard-status">
         <h2>Ingen anbefalinger endnu</h2>
         <p>Recommendation-køen er tom lige nu.</p>
+        {debugOverlay}
       </div>
     );
   }
@@ -139,6 +162,7 @@ export const DiscoveryPage = () => {
 
       <WhyPanel open={whyOpen} onClose={() => setWhyOpen(false)} explanations={current.explanations} />
       <RejectReasonPanel open={rejectPanelOpen} onResolve={(reason) => void handleRejectResolved(reason)} />
+      {debugOverlay}
     </div>
   );
 };

@@ -1,5 +1,7 @@
+import { classifyLastFmFailure, updateLastFmDiagnostics } from '../diagnostics';
 import { getSimilarArtists, getTopTracksForArtist } from '../lastfm';
 import type { LastFmTrack } from '../lastfm';
+import { hasLastfmApiKey } from '../../lib/env';
 import type { SpotifyTrack } from '../spotify/types';
 import type { Recommendation, RecommendationProvider, UserProfile } from './types';
 
@@ -43,9 +45,16 @@ interface CandidateArtist {
  * Last.fm from here on. If a call for one artist fails, that artist is
  * skipped and the rest continue — this returns as many recommendations as
  * it can get, not all-or-nothing.
+ *
+ * Every stage also reports into modules/diagnostics (see DebugPanel) so a
+ * silent "0 recommendations" can be traced back to its actual cause instead
+ * of guessed at — this never changes the resilient skip-and-continue
+ * behavior above, it only records what happened.
  */
 export class LastFmRecommendationProvider implements RecommendationProvider {
   async getRecommendations(user: UserProfile): Promise<Recommendation[]> {
+    updateLastFmDiagnostics({ apiKeyPresent: hasLastfmApiKey() });
+
     try {
       const seedNames = user.seedArtistNames.slice(0, MAX_SEED_ARTISTS);
       if (seedNames.length === 0) {
@@ -59,8 +68,11 @@ export class LastFmRecommendationProvider implements RecommendationProvider {
         return [];
       }
 
-      return await this.collectRecommendations(candidateArtists);
+      const recommendations = await this.collectRecommendations(candidateArtists);
+      updateLastFmDiagnostics({ recommendationsBuilt: recommendations.length });
+      return recommendations;
     } catch (error) {
+      updateLastFmDiagnostics({ error: classifyLastFmFailure(error) });
       console.warn('[LastFmRecommendationProvider] Uventet fejl, returnerer ingen anbefalinger:', error);
       return [];
     }
@@ -68,13 +80,17 @@ export class LastFmRecommendationProvider implements RecommendationProvider {
 
   /** Similar artists per seed, merged and deduplicated by name (keeping the best match). */
   private async findCandidateArtists(seedNames: string[]): Promise<CandidateArtist[]> {
+    updateLastFmDiagnostics({ apiCallMade: true });
+
     const results = await Promise.allSettled(
       seedNames.map(async (seed) => ({ seed, similar: await getSimilarArtists(seed) })),
     );
 
+    let firstError: unknown = null;
     const byName = new Map<string, CandidateArtist>();
     for (const result of results) {
       if (result.status === 'rejected') {
+        firstError ??= result.reason;
         console.warn('[LastFmRecommendationProvider] artist.getsimilar fejlede for en seed-kunstner:', result.reason);
         continue;
       }
@@ -87,7 +103,13 @@ export class LastFmRecommendationProvider implements RecommendationProvider {
         }
       }
     }
-    return [...byName.values()];
+
+    const candidates = [...byName.values()];
+    updateLastFmDiagnostics({
+      similarArtistsFound: candidates.length,
+      error: candidates.length === 0 && firstError ? classifyLastFmFailure(firstError) : null,
+    });
+    return candidates;
   }
 
   /** Top tracks per candidate artist, mapped to Recommendation and deduplicated by track id. */
@@ -96,13 +118,17 @@ export class LastFmRecommendationProvider implements RecommendationProvider {
       candidates.map(async (candidate) => ({ candidate, tracks: await getTopTracksForArtist(candidate.name) })),
     );
 
+    let firstError: unknown = null;
+    let topTracksTotal = 0;
     const byTrackId = new Map<string, Recommendation>();
     for (const result of results) {
       if (result.status === 'rejected') {
+        firstError ??= result.reason;
         console.warn('[LastFmRecommendationProvider] artist.gettoptracks fejlede for en kandidat-kunstner:', result.reason);
         continue;
       }
       const { candidate, tracks } = result.value;
+      topTracksTotal += tracks.length;
       for (const track of tracks.slice(0, MAX_TRACKS_PER_ARTIST)) {
         const recommendation: Recommendation = {
           id: `lastfm-rec-${track.id}`,
@@ -121,6 +147,11 @@ export class LastFmRecommendationProvider implements RecommendationProvider {
         }
       }
     }
+
+    updateLastFmDiagnostics({
+      topTracksFound: topTracksTotal,
+      error: byTrackId.size === 0 && firstError ? classifyLastFmFailure(firstError) : null,
+    });
     return [...byTrackId.values()];
   }
 }

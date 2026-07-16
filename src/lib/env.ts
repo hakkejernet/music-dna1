@@ -27,3 +27,6 @@ export const env = {
     return required('VITE_LASTFM_API_KEY', import.meta.env.VITE_LASTFM_API_KEY as string | undefined);
   },
 };
+
+/** Non-throwing presence check — for diagnostics (DebugPanel) that need to know "is it set?" without triggering env.lastfmApiKey's error. */
+export const hasLastfmApiKey = (): boolean => Boolean(import.meta.env.VITE_LASTFM_API_KEY);

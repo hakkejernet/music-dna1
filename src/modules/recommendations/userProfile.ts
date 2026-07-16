@@ -1,3 +1,4 @@
+import { updateSpotifyDiagnostics } from '../diagnostics';
 import { getCurrentUser, getTopArtists } from '../spotify';
 import { getAllArtists, getAllTracks } from '../storage';
 import type { UserProfile } from './types';
@@ -19,6 +20,7 @@ const buildSpotifySeed = async (): Promise<SpotifySeed> => {
   try {
     const [user, topArtists] = await Promise.all([getCurrentUser(), getTopArtists(5)]);
     const seedArtists = topArtists.slice(0, MAX_SEED_ARTISTS);
+    updateSpotifyDiagnostics({ loginOk: true, topArtistsFound: topArtists.length, error: null });
     return {
       userId: user.id,
       seedArtistIds: seedArtists.map((artist) => artist.id),
@@ -27,6 +29,11 @@ const buildSpotifySeed = async (): Promise<SpotifySeed> => {
     };
   } catch (error) {
     console.warn('[recommendations] Kunne ikke hente Spotify top-kunstnere til seeds, fortsætter uden:', error);
+    updateSpotifyDiagnostics({
+      loginOk: false,
+      topArtistsFound: null,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return { userId: '', seedArtistIds: [], seedArtistNames: [], seedGenres: [] };
   }
 };

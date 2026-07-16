@@ -52,6 +52,11 @@ alt sammen lokalt i din browser.
       lokalt (`modules/spotifyLink/`) så samme sang aldrig slås op igen.
       Intet match -> et Spotify-søgelink, aldrig en blindgyde. Virker på
       iPhone, Android og desktop.
+- [x] **Debug-panel** (kun i `npm run dev`, ikke i production-builden) —
+      🐛-knap der viser præcis hvad der skete i seneste
+      recommendation-load: Spotify-login/top-artists, Last.fm API
+      key/kald/resultater, den endelige kø og — hvis mock blev brugt —
+      den præcise fallback-årsag. Rent diagnostik, `modules/diagnostics/`.
 
 Se [CHANGELOG.md](./CHANGELOG.md) for detaljer pr. opgave, inkl. kendte
 API-begrænsninger i Last.fm-integrationen.
