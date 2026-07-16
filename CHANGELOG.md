@@ -1,5 +1,38 @@
 # Changelog
 
+## LastFmRecommendationProvider + provider-konfiguration
+
+Arkitektur-skift: Spotify er ikke længere recommendation-motoren.
+Spotify bruges fremover kun til login, bibliotek, playlists, gemte
+sange og topkunstnere.
+
+- `RecommendationProvider`-interfacet er uændret
+- `SpotifyRecommendationProvider` er markeret `@deprecated` (kommentar
+  i koden) — ligger stadig af kompatibilitetshensyn, men er ikke
+  længere i den aktive provider-konfiguration
+- Ny `LastFmRecommendationProvider`: implementerer
+  `RecommendationProvider`, returnerer mock-data. **Fuldstændig
+  uafhængig af Spotify** — importerer aldrig
+  `modules/spotify`'s klient/auth/endpoints, og virker uændret selv
+  hvis Spotify-login fejler helt
+- Ny `providerConfig.ts` med `getConfiguredProviders()` — den ene
+  funktion der bestemmer hvilke providers `loadRecommendationQueue()`
+  bruger. I dag kun Last.fm; at tilføje flere (fx Spotify igen, eller
+  MusicBrainz senere) er at udvide dette array, intet andet
+- `loadRecommendationQueue()` kører nu alle konfigurerede providers
+  parallelt (`Promise.allSettled`) og **konkatenerer** resultaterne —
+  ingen fusion eller scoring endnu. En provider der fejler bidrager
+  bare med 0 anbefalinger og logges tydeligt, uden at vælte de andre.
+  Falder tilbage til de eksisterende mock-anbefalinger hvis alle
+  providers tilsammen returnerer en tom liste
+- `DiscoveryPage` er **uændret** ud over hvad der allerede var der —
+  kender fortsat kun `RecommendationQueue` og `loadRecommendationQueue`
+- Verificeret: med en session uden gyldigt Spotify-login (Spotify-kald
+  fejler) viser Discovery stadig Last.fm-mock-sangene korrekt — beviser
+  at provideren er reelt Spotify-uafhængig
+- Ingen AI, ingen MusicBrainz endnu
+- Build, typecheck og lint grønne
+
 ## SpotifyRecommendationProvider
 
 RecommendationQueue har fået sin første rigtige provider — stadig ingen

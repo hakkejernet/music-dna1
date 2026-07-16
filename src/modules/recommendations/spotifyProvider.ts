@@ -2,11 +2,16 @@ import { getRecommendedTracks } from '../spotify';
 import type { Recommendation, RecommendationProvider, UserProfile } from './types';
 
 /**
- * Talks to Spotify's /recommendations endpoint. Spotify restricted that
- * endpoint to apps with pre-approved "extended quota mode" in Nov 2024 —
- * a fresh app like this one will typically get a 403/404 there. That is
- * an expected, non-fatal outcome: this provider always resolves (never
- * throws) and returns an empty list when Spotify can't deliver.
+ * @deprecated Spotify is no longer the recommendation engine — it's kept
+ * strictly for login, library, playlists, saved tracks, and top artists
+ * (see modules/spotify). This provider stays for compatibility and is no
+ * longer part of the default provider configuration (see
+ * providerConfig.ts). It talks to Spotify's /recommendations endpoint,
+ * which Spotify restricted to apps with pre-approved "extended quota
+ * mode" in Nov 2024 — a fresh app like this one will typically get a
+ * 403/404 there. That is an expected, non-fatal outcome: this provider
+ * always resolves (never throws) and returns an empty list when Spotify
+ * can't deliver.
  */
 export class SpotifyRecommendationProvider implements RecommendationProvider {
   async getRecommendations(user: UserProfile): Promise<Recommendation[]> {

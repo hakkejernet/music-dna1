@@ -20,13 +20,24 @@ alt sammen lokalt i din browser.
 - [x] `RecommendationQueue`-arkitektur — Discovery læser fra en separat
       anbefalings-kø (i dag fyldt med mock-data), ikke fra brugerens eget
       bibliotek. Klar til at modtage en rigtig kilde senere.
-- [x] `SpotifyRecommendationProvider` — første rigtige
-      `RecommendationProvider`. Kalder Spotifys `/recommendations`
-      (begrænset for nye apps, ligesom audio-features), fejler aldrig
-      hårdt, og falder automatisk tilbage til mock-anbefalinger.
+- [x] `SpotifyRecommendationProvider` — første `RecommendationProvider`.
+      Kaldte Spotifys `/recommendations` (begrænset for nye apps, ligesom
+      audio-features). **Nu deprecated** — se nedenfor.
+- [x] `LastFmRecommendationProvider` — første aktive provider efter
+      arkitektur-skiftet væk fra Spotify som recommendation-motor.
+      Mock-data indtil videre, fuldstændig uafhængig af Spotify.
+      `providerConfig.ts` styrer hvilke providers der er aktive.
 
 Ingen rigtige anbefalinger endnu — det kommer i en senere version. Se
 [CHANGELOG.md](./CHANGELOG.md) for detaljer pr. opgave.
+
+### Spotifys rolle
+
+Spotify bruges **ikke længere som recommendation-motor**. Spotify bruges
+udelukkende til: login, brugerens bibliotek, playlists, gemte sange og
+topkunstnere. `SpotifyRecommendationProvider` ligger stadig i koden af
+kompatibilitetshensyn, men er markeret deprecated og er ikke længere i
+den aktive provider-konfiguration.
 
 ### Vigtigt: ingen audio-features i v0.1
 
@@ -56,8 +67,9 @@ src/
     analysis/   — beregner Music DNA ud fra lokalt gemt data
     recommendations/ — Recommendation-interface, RecommendationQueue,
                         RecommendationProvider-interface,
-                        SpotifyRecommendationProvider (falder tilbage
-                        til mock-data hvis Spotify ikke leverer)
+                        providerConfig.ts (aktive providers),
+                        LastFmRecommendationProvider (aktiv, mock),
+                        SpotifyRecommendationProvider (deprecated)
   features/
     auth/       — login-skærm, OAuth-callback, auth-context
     discovery/  — Discovery-side (forsiden): ét sang-kort ad gangen,
