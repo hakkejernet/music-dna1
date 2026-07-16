@@ -1,5 +1,40 @@
 # Changelog
 
+## Research: Spotify Embed som primær afspiller — anbefales ikke
+
+Undersøgte om Spotify Embed (iframe-widget) kan bruges som primær
+afspiller. Konklusion: **nej** — ingen prototype bygget, ren
+dokumentation. Se `docs/spotify-embed-research.md` for alle detaljer.
+
+- **Afgørende blokker**: Spotifys egen support-dokumentation bekræfter
+  at embeddet **altid kun spiller 30-sekunders preview på mobil**
+  (inkl. iPhone Safari), uanset login/Premium — kun på desktop kan
+  autentificerede brugere få hele sangen, og selv der er adfærden
+  upålidelig ifølge flere community-tråde. Det er samme lyd-loft som
+  vores eksisterende `previewUrl`-baserede `<audio>`-løsning, blot med
+  markant mere kompleksitet oveni.
+- **Konkret arkitektur-problem fundet**: vores aktive kilde
+  (`LastFmRecommendationProvider`) leverer ikke rigtige Spotify
+  track-ID'er (kun MusicBrainz-mbid eller en syntetisk slug) —
+  Spotify Embed kræver et ægte Spotify-ID pr. track, så det ville kræve
+  endnu et API-kald (Spotify search) pr. anbefaling for at virke overhovedet.
+- Alle 8 spørgsmål fra opgaven besvaret enkeltvis: kan afspille direkte
+  i browser (ja) · Premium-krav (nej strengt, men upålideligt uden) ·
+  iPhone Safari (loader fint, men preview-only) · GitHub Pages/PWA
+  (ingen problemer) · hel sang vs. preview (kun desktop) · embed fra
+  track-ID (ja, offentlig URL, intet API-nøgle-krav) · JS-styring (ja,
+  iFrame API med kendte pålidelighedsproblemer) · licens/branding
+  (skal ledsages af Spotify-logo, ingen co-branding, intet autoplay/loop)
+- Bemærket, men ikke afgørende alene: at gøre Spotify Embed til
+  "primær afspiller" trækker i retning af at Music DNA *bliver* en
+  afspiller — i spænding med produktets erklærede identitet siden v0.1
+  ("Ikke en musikafspiller").
+- **Anbefalet alternativ**: behold `previewUrl`+`<audio>` som i dag, og
+  tilføj et "Åbn i Spotify"-deep-link (`open.spotify.com/track/{id}`)
+  for sange med et ægte Spotify-ID, i stedet for at bygge fuld
+  in-app-afspilning.
+- Ren research — ingen kode ændret.
+
 ## Afvisningsårsager: bedre feedback-signal
 
 Sidste større feature før testfasen. Når brugeren trykker ❌ Afvis, åbnes nu
