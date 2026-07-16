@@ -46,6 +46,12 @@ alt sammen lokalt i din browser.
       eller luk/vent og få en almindelig afvisning. Årsagen gemmes lokalt
       og fodrer `PreferenceProfile.topRejectionReasons` (endnu ikke brugt
       af ranking).
+- [x] **🎵 Åbn i Spotify** — ét klik fra en anbefaling til at lytte. Har
+      anbefalingen et ægte Spotify-ID, åbnes den direkte; ellers slås
+      titel+kunstner op via Spotifys søge-API, og et fundet match caches
+      lokalt (`modules/spotifyLink/`) så samme sang aldrig slås op igen.
+      Intet match -> et Spotify-søgelink, aldrig en blindgyde. Virker på
+      iPhone, Android og desktop.
 
 Se [CHANGELOG.md](./CHANGELOG.md) for detaljer pr. opgave, inkl. kendte
 API-begrænsninger i Last.fm-integrationen.
@@ -102,6 +108,12 @@ src/
     preferences/ — PreferenceProfile: foretrukne/undgåede genrer og
                    kilder, foretrukne kunstnere/årtier — udregnet rent
                    statistisk fra modules/history, ingen AI, ingen caching
+    spotifyLink/ — resolveSpotifyTrackUrl(): finder/cacher det rigtige
+                   open.spotify.com/track/{id}-link for en anbefaling
+                   (direkte ID -> lokal cache -> Spotify search ->
+                   søgelink-fallback). Eneste sted der ved noget om
+                   Spotify-opslag for "Åbn i Spotify" — DiscoveryPage
+                   kender kun modulets to funktioner
   features/
     auth/       — login-skærm, OAuth-callback, auth-context
     discovery/  — Discovery-side (forsiden): ét sang-kort ad gangen,

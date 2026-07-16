@@ -70,6 +70,7 @@ export const createMockRecommendations = (): Recommendation[] =>
         score: Number((0.9 - index * 0.08).toFixed(2)),
         reasons: MOCK_REASON_SETS[index % MOCK_REASON_SETS.length],
         genres: genre ? [genre] : [],
+        spotifyTrackId: null,
       };
     }),
   );

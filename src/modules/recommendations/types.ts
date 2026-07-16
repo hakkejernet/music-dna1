@@ -8,6 +8,8 @@ export interface Recommendation {
   reasons: string[];
   /** Provider-supplied genres for this track, if known. Empty when the source can't tell us. */
   genres: string[];
+  /** Real Spotify track ID, if the provider gave us one or modules/spotifyLink resolved+cached one. Null until resolved. */
+  spotifyTrackId: string | null;
 }
 
 /** Taste signal handed to a RecommendationProvider — not the full Spotify user object. */

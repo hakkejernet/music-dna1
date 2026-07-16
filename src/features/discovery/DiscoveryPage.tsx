@@ -2,9 +2,11 @@ import { useEffect, useState } from 'react';
 import { getSavedCount, rejectRecommendation, saveRecommendation } from '../../modules/history';
 import type { RankedRecommendation } from '../../modules/ranking';
 import { getPrimaryGenre, loadRecommendationQueue, RecommendationQueue } from '../../modules/recommendations';
+import { getInstantSpotifyUrl, resolveSpotifyTrackUrl } from '../../modules/spotifyLink';
 import { useAuth } from '../auth/AuthContext';
 import { ActionBar } from './components/ActionBar';
 import { DiscoveryCard } from './components/DiscoveryCard';
+import { OpenInSpotifyButton } from './components/OpenInSpotifyButton';
 import { RejectReasonPanel } from './components/RejectReasonPanel';
 import { WhyPanel } from './components/WhyPanel';
 
@@ -25,6 +27,7 @@ export const DiscoveryPage = () => {
   const [lastAction, setLastAction] = useState<string | null>(null);
   const [whyOpen, setWhyOpen] = useState(false);
   const [rejectPanelOpen, setRejectPanelOpen] = useState(false);
+  const [spotifyUrl, setSpotifyUrl] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -39,6 +42,27 @@ export const DiscoveryPage = () => {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!current) {
+      setSpotifyUrl(null);
+      return;
+    }
+
+    const title = current.track.name;
+    const artist = current.track.artists[0]?.name ?? '';
+    // Instant, always-valid fallback first — a real href must be ready
+    // before any click, or mobile Safari blocks the async-resolved one.
+    setSpotifyUrl(getInstantSpotifyUrl(title, artist, current.spotifyTrackId));
+
+    let cancelled = false;
+    void resolveSpotifyTrackUrl(title, artist, current.spotifyTrackId).then((result) => {
+      if (!cancelled) setSpotifyUrl(result.url);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [current]);
 
   const finishAction = (actionKey: keyof typeof ACTION_LABELS, next: RankedRecommendation | null) => {
     setLastAction(ACTION_LABELS[actionKey]);
@@ -102,6 +126,8 @@ export const DiscoveryPage = () => {
       {lastAction && <p className="discovery__last-action">Sidste handling: {lastAction}</p>}
 
       <DiscoveryCard track={current.track} genre={getPrimaryGenre(current)} />
+
+      {spotifyUrl && <OpenInSpotifyButton href={spotifyUrl} />}
 
       <ActionBar
         onSave={() => void handleAction('save')}

@@ -37,6 +37,8 @@ export class SpotifyRecommendationProvider implements RecommendationProvider {
         // lives on the artist) — leaving this empty avoids a second API
         // call just to look it up.
         genres: [],
+        // This provider is Spotify itself, so track.id is already a real Spotify track ID.
+        spotifyTrackId: track.id,
       }));
     } catch (error) {
       console.warn(

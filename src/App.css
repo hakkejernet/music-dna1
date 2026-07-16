@@ -527,6 +527,28 @@
   border-color: transparent;
 }
 
+/* Open in Spotify */
+
+.open-in-spotify {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 14px;
+  border-radius: 14px;
+  background: #1db954;
+  color: white;
+  font-weight: 700;
+  font-size: 15px;
+  text-decoration: none;
+  text-align: center;
+}
+
+.open-in-spotify span {
+  font-size: 16px;
+}
+
 .why-link {
   border: none;
   background: none;

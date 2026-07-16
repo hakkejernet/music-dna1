@@ -6,6 +6,7 @@ export {
   getRecommendedTracks,
   getTopArtists,
   getUserPlaylists,
+  searchTracks,
 } from './endpoints';
 export { SpotifyAuthError } from './client';
 export type { RecommendationSeeds } from './endpoints';

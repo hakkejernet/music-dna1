@@ -111,6 +111,9 @@ export class LastFmRecommendationProvider implements RecommendationProvider {
           score: candidate.match,
           reasons: [`Ligner ${candidate.seed} på Last.fm`],
           genres: [],
+          // Last.fm never gives us a real Spotify ID (mbid or synthetic slug only) —
+          // modules/spotifyLink resolves+caches one on demand when the user acts on this card.
+          spotifyTrackId: null,
         };
         const existing = byTrackId.get(recommendation.track.id);
         if (!existing || recommendation.score > existing.score) {

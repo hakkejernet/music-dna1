@@ -1,5 +1,49 @@
 # Changelog
 
+## "Åbn i Spotify" — ét klik fra anbefaling til lyt
+
+Højeste prioritet: Discovery havde for meget friktion, fordi
+`LastFmRecommendationProvider` ikke leverer rigtige Spotify track-ID'er
+(kendt problem, se Spotify Embed-researchen nedenfor) — brugeren måtte
+selv søge sangen op i Spotify. Nu er der en 🎵 Åbn i Spotify-knap på hvert
+kort, der altid fører til Spotify med præcis ét klik.
+
+- Nyt modul `modules/spotifyLink/` — al Spotify-opslagslogik ligger her,
+  fuldstændig adskilt fra `DiscoveryPage`, som kun kender
+  `getInstantSpotifyUrl()`/`resolveSpotifyTrackUrl()`.
+- Opslags-rækkefølge pr. anbefaling: (1) allerede et ægte Spotify-ID ->
+  direkte link, intet API-kald. (2) tidligere fundet for samme
+  titel+kunstner -> hentes fra en lokal IndexedDB-cache
+  (`music-dna-spotify-link-cache`), intet API-kald. (3) ellers et
+  `GET /search`-kald til Spotify (ny `searchTracks()`-endpoint) med et
+  deterministisk, ikke-AI eksakt-match på normaliseret titel+kunstner
+  (`modules/spotifyLink/matching.ts`) — findes et match, caches
+  Spotify-ID'et med det samme, så samme sang aldrig slås op igen. (4)
+  intet match -> et Spotify-søgelink (`open.spotify.com/search/...`) —
+  stadig kun ét klik, aldrig en blindgyde.
+- Links bruger udelukkende `https://open.spotify.com/...` (ikke
+  `spotify://`-URI'er) — fungerer som universal/app-link på iPhone og
+  Android (åbner appen hvis installeret, ellers web) og som normalt link
+  på desktop, uden platform-branching.
+- Løser en mobil-specifik faldgrube: knappens `href` er altid en rigtig,
+  gyldig Spotify-URL fra første render (et synkront søgelink-fallback via
+  `getInstantSpotifyUrl()`), som derefter opgraderes asynkront til det
+  præcise track-link. Uden dette ville mobil-Safari kunne blokere
+  navigationen, fordi den sker efter et `await` og derfor ikke længere
+  tæller som en direkte brugerhandling.
+- `Recommendation` har nu et `spotifyTrackId: string | null`-felt.
+  `LastFmRecommendationProvider`/mock sætter `null` (intet ægte ID
+  endnu), den deprecatede `SpotifyRecommendationProvider` sætter det
+  rigtige Spotify-ID direkte.
+- Verificeret med en midlertidig Playwright-harness (samme mønster som
+  tidligere opgaver, da dette sandbox-miljø blokerer udgående kald til
+  `api.spotify.com`): mocket `/search`, kørte hele køen igennem og
+  bekræftede alle fire stier — direkte ID, cache-hit (uden nyt API-kald),
+  eksakt søgematch (+ efterfølgende cache-skrivning), og søge-fallback
+  ved intet match. 10/10 checks bestod. Scriptet og den midlertidige
+  Playwright-devDependency er fjernet igen efter verifikation.
+- Ingen AI, ingen nye ranking-regler — kun opslag og links.
+
 ## Research: Spotify Embed som primær afspiller — anbefales ikke
 
 Undersøgte om Spotify Embed (iframe-widget) kan bruges som primær

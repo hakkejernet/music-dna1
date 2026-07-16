@@ -221,3 +221,16 @@ export const getRecommendedTracks = async (seeds: RecommendationSeeds): Promise<
   }
   return tracks;
 };
+
+/** Searches Spotify's track catalog by title + artist. Used by modules/spotifyLink to resolve a real Spotify track ID for a Recommendation that didn't come from Spotify. */
+export const searchTracks = async (title: string, artist: string, limit = 5): Promise<SpotifyTrack[]> => {
+  const q = `track:${title} artist:${artist}`;
+  const params = new URLSearchParams({ q, type: 'track', limit: String(limit) });
+  const raw = await spotifyGet<{ tracks: { items: RawTrack[] } }>(`/search?${params.toString()}`);
+  const tracks: SpotifyTrack[] = [];
+  for (const rawTrack of raw.tracks.items) {
+    const track = mapTrack(rawTrack, { addedAt: null, playlistIds: [] });
+    if (track) tracks.push(track);
+  }
+  return tracks;
+};
