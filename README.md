@@ -17,6 +17,9 @@ alt sammen lokalt i din browser.
       Gem/Afvis/Kendte allerede/Næste og et "Hvorfor denne?"-panel med
       placeholder-grunde. **Ren UI** — ingen anbefalings-algoritme, ingen
       AI, ingen ny API-logik endnu.
+- [x] `RecommendationQueue`-arkitektur — Discovery læser fra en separat
+      anbefalings-kø (i dag fyldt med mock-data), ikke fra brugerens eget
+      bibliotek. Klar til at modtage en rigtig kilde senere.
 
 Ingen rigtige anbefalinger endnu — det kommer i en senere version. Se
 [CHANGELOG.md](./CHANGELOG.md) for detaljer pr. opgave.
@@ -47,9 +50,12 @@ src/
     storage/    — IndexedDB (via idb): tracks, artists, playlists, meta
     sync/       — orkestrerer hentning fra Spotify -> lagring lokalt
     analysis/   — beregner Music DNA ud fra lokalt gemt data
+    recommendations/ — Recommendation-interface + RecommendationQueue,
+                        i dag fyldt med mock-data
   features/
     auth/       — login-skærm, OAuth-callback, auth-context
-    discovery/  — Discovery-side (forsiden): ét sang-kort ad gangen
+    discovery/  — Discovery-side (forsiden): ét sang-kort ad gangen,
+                  læser fra RecommendationQueue
     dashboard/  — Music DNA-dashboard (/music-dna) og undervisualiseringer
     shell/      — app-nav til at skifte mellem Discovery og Music DNA
   lib/          — PKCE-hjælpere, env-håndtering, formatering, shuffle

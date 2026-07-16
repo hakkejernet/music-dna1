@@ -1,5 +1,30 @@
 # Changelog
 
+## RecommendationQueue-arkitektur
+
+Discovery viser ikke længere sange fra brugerens eget bibliotek — det
+gik imod projektets mission (find NY musik). Discovery læser nu fra en
+separat `RecommendationQueue` i stedet for `modules/storage`.
+
+- Nyt modul `modules/recommendations/`:
+  - `Recommendation`-interface (`id`, `track`, `source`, `score`, `reasons`)
+  - `RecommendationQueue`-klasse: `current()` / `advance()` / `enqueue()` /
+    `isEmpty()` / `size` / `toArray()` — ved intet om hvor anbefalingerne
+    kommer fra
+  - `createMockRecommendations()`: 6 håndlavede mock-sange (ingen af dem
+    fra brugerens bibliotek), shufflet ved opstart
+  - `getPrimaryGenre()`: mock-kun hjælper til genre-visning, indtil en
+    rigtig kilde leverer genre-data
+- `DiscoveryPage` bygger nu en `RecommendationQueue` med mock-data i
+  stedet for at kalde `getAllTracks()`/`getAllArtists()` fra
+  IndexedDB — virker uden at brugeren nogensinde har synkroniseret sit
+  bibliotek
+- Ingen ændringer i `DiscoveryCard`, `PreviewPlayer`, `ActionBar` eller
+  `WhyPanel` — de eksisterende UI-komponenter virker uændret
+- Stadig **ingen** rigtig anbefalings-algoritme, ingen AI, ingen nye
+  API-kald — kun arkitekturen der gør Discovery klar til at modtage
+  eksterne anbefalinger senere
+
 ## Discovery-side (UI only)
 
 Forsiden er nu en Discovery-side i stedet for Music DNA-dashboardet.
