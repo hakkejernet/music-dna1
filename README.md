@@ -182,3 +182,33 @@ værktøjet skriver aldrig til din Spotify-konto.
 - `npm run build` — typecheck + produktionsbuild
 - `npm run lint` — oxlint
 - `npm run preview` — preview af produktionsbuild
+
+## Deployment (GitHub Pages)
+
+`.github/workflows/deploy.yml` bygger og deployer automatisk til GitHub
+Pages ved push til `claude/music-discovery-v01-b00w0u` (eller manuelt via
+"Run workflow"). Appen ender på
+`https://<bruger>.github.io/music-dna1/`.
+
+Da dette er en ren frontend-app uden backend, bages `VITE_SPOTIFY_CLIENT_ID`
+og `VITE_LASTFM_API_KEY` ind i den offentlige JS-bundle ved build — helt
+normalt for denne type nøgler (Spotifys PKCE-flow er designet til det).
+
+Én gang, før første deploy:
+
+1. **Tilføj repo-secrets**: Settings → Secrets and variables → Actions →
+   New repository secret. Tilføj `VITE_SPOTIFY_CLIENT_ID` og
+   `VITE_LASTFM_API_KEY`.
+2. **Slå Pages til**: Settings → Pages → Source: **GitHub Actions**.
+3. **Opdater Spotify-appens redirect URI** til
+   `https://<bruger>.github.io/music-dna1/callback` (præcis denne — se
+   `deploy.yml`).
+
+GitHub Pages har ingen server-side rewrites, så `public/404.html` +
+scriptet i `index.html` bruger det velkendte
+[spa-github-pages](https://github.com/rafgraph/spa-github-pages)-trick til
+at holde client-side routing (inkl. `/callback`) i live ved direkte
+navigation/refresh. `vite.config.ts`s `base` og `App.tsx`s
+`BrowserRouter`-`basename` holder sig automatisk synkroniseret via
+`import.meta.env.BASE_URL` — kun produktionsbuilds får subpath'et,
+lokal dev kører stadig på `/`.

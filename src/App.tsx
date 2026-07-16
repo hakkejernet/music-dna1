@@ -21,7 +21,7 @@ const RequireAuth = ({ children }: { children: ReactNode }) => {
 
 const App = () => (
   <AuthProvider>
-    <BrowserRouter>
+    <BrowserRouter basename={import.meta.env.BASE_URL}>
       <Routes>
         <Route path="/callback" element={<AuthCallback />} />
         <Route
