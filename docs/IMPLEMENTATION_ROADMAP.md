@@ -94,6 +94,33 @@ punkt 2, "alle relevante tests består", forudsætter dette).
   (`src/modules/trackDna/validateSignalVector.test.ts`, 14 tests) som
   skabelon for hvordan fremtidige milestoners tests skal se ud.
 
+## Arkitektur-note: signal-oprindelse (efter M2, før M3)
+
+Bindende krav for alle fremtidige milestones der konstruerer eller
+opdaterer et signal — ikke implementeret nu, men arkitekturen må ikke
+gøre det umuligt senere. Mest relevant for M4 (enrichment, der
+konstruerer `TrackDNA`-signaler) og M8 (feedback-baseret
+`UserDNA`-opdatering).
+
+Hvert signal skal på sigt kunne besvare:
+- Hvilken værdi har det?
+- Hvilken confidence har det?
+- Hvor stammer denne viden fra? (Cold Start, Feedback, eller en
+  fremtidig kilde)
+
+**Arkitektonisk vurdering, verificeret nu:** dette er *ikke* blokeret
+af M1 eller M2's nuværende implementering. `SignalReading`
+(`{value, confidence}`) er et almindeligt objekt — en tredje, additiv
+egenskab (fx `source`) kan tilføjes til typen når det besluttes.
+Ingen kode i `validateSignalVector()` eller `buildColdStartUserDna()`
+antager at et signal *kun* har disse to felter (ingen
+`Object.keys(...).length === 2`-agtige tjek noget sted); TypeScripts
+strukturelle typecheck vil selv pege på de konstruktionssteder der
+skal opdateres den dag feltet tilføjes — en mekanisk migrering, ikke
+en ombygning.
+
+Ingen kode ændret som del af denne note.
+
 ---
 
 ## Afhængighedsoversigt
