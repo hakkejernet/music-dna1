@@ -1722,9 +1722,11 @@ testbrugere) et meningsfuldt billede, eller er datamængden for lav til
 at sige noget endnu — og hvis sidste, hvad er den mindste datamængde
 der ville gøre det meningsfuldt?
 
-**Status:** ikke udført. Se scope-noten øverst i denne sektion — den
-faktiske M10 blev Application Layer. Observability/kalibrering er en
-åben, uplanlagt opgave, ligesom M9's fejlhåndtering.
+**Status:** genoptaget som M13. Se scope-noten øverst i denne sektion —
+den faktiske M10 blev Application Layer; Observability/kalibrering
+forblev en åben opgave indtil M13, hvor brugeren eksplicit genoptog den
+under det nye milestone-nummer, samme mønster som M12s genoptagelse af
+M9 (se M13 nedenfor).
 
 ### Review Report — M10 (Application Layer, det faktiske scope)
 
@@ -2168,6 +2170,151 @@ kalibrering") og M11 ("To rigtige Candidate Providers") er stadig ikke
 bygget; (b) om ADR-22 skal opdateres til at afspejle at
 `Repository<T>`s kontrakt ændrede sig én gang (med god grund) er en
 åben beslutning, ikke truffet her.
+
+---
+
+## M13 — Observability og kalibreringsmåling (genoptagelse af oprindelig M10)
+
+**Scope-note:** M13 genoptager, efter brugerens eget eksplicitte valg,
+den oprindelige roadmap-M10 ("Observability og kalibreringsmåling",
+historik bevaret ovenfor under M10) — samme mønster som M12s
+genoptagelse af den oprindelige M9. Den oprindelige teksts idé om en
+"simpel, inspicérbar visning" er eksplicit udelukket af M13s egne
+regler ("Ingen dashboards. Ingen visualisering. Kun beregninger."; "Ingen
+UI. Ingen browser.") — kalibrerings-bucket-konceptet fra TDS afsnit 8 er
+derimod bevaret og implementeret direkte i `calculateCalibrationScore()`.
+Elleve bindende regler (et Observability-modul der kun observerer og
+aldrig påvirker beslutninger; immutable Observation-objekter; kalibrering
+uden at ændre UserDNA eller give feedback til domænet; intet logging-
+framework/console.log/analytics-SDK; observationer produceres via et
+ObservationSink-interface, hvor Application Layer kun beskriver
+hændelsen og Observability ejer repræsentationen; Learning Engine må
+aldrig kende Observability, Application Layer må kun kende
+ObservationSink-kontrakten; ingen persistence endnu — kun hukommelse;
+seks navngivne, deterministiske metrikker som rene funktioner; ingen
+dashboards/visualisering; obligatoriske beviser; ingen mutable
+referencer i observationer) styrede det faktiske arbejde.
+
+### Review Report — M13
+
+**Hvad blev bygget?**
+`src/modules/observability/`:
+- `types.ts` — fem Observation-typer (`RecommendationShown`,
+  `RecommendationAccepted`, `RecommendationRejected`,
+  `RecommendationKnown`, `LearningApplied`, jf. Rule 2s eksempler
+  ordret) og `ObservationSink`-interfacet. Hver Observation-type er
+  bevidst bygget af rene primitiver (strenge/tal/boolean/en
+  string-array) — intet importeret domænetype (`Candidate`/`TrackDNA`/
+  `RankedCandidate`/`UserDNA`) bruges nogen steder. Dette er en
+  designbeslutning, ikke en tilfældighed: det gør "ingen afhængighed
+  fra domænet til Observability" trivielt sandt i begge retninger.
+- `inMemoryObservationSink.ts` — `InMemoryObservationSink`: den ene
+  implementation denne milestone bygger (Rule 7). Hver `record*`-metode
+  tager et minimalt, beskrivende input-objekt plus et eksplicit `now:
+  Date` (samme determinisme-mønster som M2 fremad), og selv bygger og
+  fryser (`Object.freeze`) den faktiske Observation — kalderen beskriver
+  kun hændelsen, Observability ejer repræsentationen (Rule 5). Hver
+  metode returnerer `void`.
+- `metrics.ts` — de seks navngivne metrikker (`calculateAcceptanceRate`,
+  `calculateRejectRate`, `calculateKnownRate`, `calculateCoverage`,
+  `calculateProviderContribution`, `calculateCalibrationScore`), alle
+  rene funktioner af `readonly Observation[]`. `calculateCalibrationScore`
+  bygger direkte på TDS afsnit 8s kalibrerings-bucket-koncept
+  (0-20/20-40/.../80-100, forudsagt vs. faktisk accept-rate).
+- 29 nye tests i tre filer: `inMemoryObservationSink.test.ts`,
+  `metrics.test.ts`, samt to nye `describe`-blokke tilføjet til M11s
+  `src/architecture.test.ts` (samme, nu etablerede "arkitekturregler
+  verificeres automatisk" mønster, ADR-27) der beviser Observability
+  har nul kobling i begge retninger.
+
+**Bevidst ikke-integration, gjort eksplicit (ingen ADR-16-konflikt —
+intet fra M1-M12 er ændret):** M13s Rule 6 ("Application Layer må kun
+kende ObservationSink-kontrakten") er en fremadskuende grænse for
+*hvordan* en fremtidig integration skal se ud, ikke et krav om at bygge
+den integration nu. Ingen fil i `applicationLayer/` (fx `LearnFromReaction`)
+er ændret til rent faktisk at kalde en `ObservationSink` — det ville
+kræve at tilføje observability-kald midt i M10s eksisterende workflows,
+en ændring af en tidligere milestone der ikke er eksplicit krævet af
+nogen af M13s ti regler (i modsætning til M12s Rule 3, som eksplicit
+krævede en kontrakt-ændring). At forbinde de to er derfor en åben,
+fremtidig opgave — bevidst gjort synlig, samme mønster som M3/M7/M9s
+egne udskudte integrationer, ikke stille undladt.
+
+**Præcisering, tilføjet efter brugerens review:** M13 etablerer
+observability som en arkitektonisk kapabilitet. Den producerer endnu
+ingen observationer under normal applikationskørsel. Integration med
+Application Layer er en separat, fremtidig milestone.
+
+**Hvilke tests blev kørt?**
+`npm run test` → 230/230 grønne (201 fra M1-M12, uændrede, + 29 nye).
+`npx tsc -b`, `npm run lint`, `npm run build` alle grønne.
+
+**Bevis for ren observation:** hver `record*`-metode returnerer `void`
+og indeholder ingen logik udover at forme og gemme et objekt — ingen
+gren, intet kald til noget andet modul, verificeret ved gennemlæsning
+af `inMemoryObservationSink.ts`s fulde indhold (10 linjer kode pr. metode,
+alle strukturelt identiske).
+
+**Bevis for ingen sideeffekter:** at kalde et `record*`-kald to gange
+med samme input og samme `now` giver to byte-identiske, uafhængige
+gemte observationer (ingen delt tilstand mellem separate
+sink-instanser, samme "hver instans ejer kun sin egen tilstand"-disciplin
+som M9 Rule 8); en frosset Observation kaster ved mutation-forsøg
+(`Object.isFrozen` bekræftet), inklusive dens `providerNames`-array.
+
+**Bevis for deterministiske metrikker:** hver af de seks
+metrik-funktioner testet med gentagne kald på samme observations-array
+→ identisk resultat; `calculateProviderContribution` og
+`calculateCalibrationScore` testet specifikt for orden-uafhængighed.
+
+**Bevis for ingen afhængighed fra domænet:** to statiske
+arkitektur-tests (tilføjet til `src/architecture.test.ts`) — (1) ingen
+fil uden for `src/modules/observability/` importerer noget derfra
+(sandt, fordi ingen integration er lavet endnu); (2) ingen fil inde i
+`src/modules/observability/` har en `../`-import — modulet rører
+strukturelt intet uden for sin egen mappe. Sammenholdt: nul kobling i
+begge retninger, ikke kun én.
+
+**Bevis for at ObservationSink er den eneste kontrakt mellem
+Application Layer og Observability:** da ingen faktisk integration
+findes endnu (se afklaringen ovenfor), er beviset arkitektonisk snarere
+end et kørende eksempel: `ObservationSink`-interfacet er det eneste
+eksporterede symbol i `observability/index.ts` der beskriver en
+kontrakt (resten er data-typer og selve implementationen); en
+`FakeObservationSink`, håndrullet i test og aldrig delt med den rigtige
+`InMemoryObservationSink`, kunne opfylde interfacet lige så let — samme
+udskiftelighedsmønster som M9s repositories.
+
+**Bevis for at Learning Engine er uændret:** `git diff` mod M12s commit
+for `src/modules/learningEngine/` (samt `rankingEngine/`, `queue/`,
+`candidateProviders/`, `enrichment/`, `applicationLayer/`,
+`persistence/`, `infrastructure/`) viser ingen ændringer i nogen af de
+otte mapper.
+
+**Er milestone 100% færdig ifølge Definition of Done?**
+1. Acceptkriterier (de nye, brugerdefinerede regler) opfyldt — ja, se
+   bevisafsnittene ovenfor. 2. Tests består — ja, 230/230. 3. Ingen
+   TODO/placeholder — ja. 4. Dokumentation opdateret — ja, denne Review
+   Report plus inline-kommentarer i koden. 5. Fungerer isoleret uden
+   fremtidige milestones — ja, nul imports i begge retninger, statisk
+   bevist. 6. Ingen kendte kritiske fejl — ja. 7. Reviewet mod
+   PRD/TDS/ADR — ja: ikke-integrations-afklaringen er en afgrænsning,
+   ikke en ændring, af nogen tidligere milestone; ADR-16 til ADR-29 er
+   alle respekteret (intet fra M1-M12 er rørt). 8. Demonstrerer den
+   tilsigtede værdi — ja: beviset er ikke om anbefalingerne "bliver
+   målt" i produktion (der er ingen kobling endnu), men at systemet
+   *kan* måle deres kvalitet uden at kunne påvirke dem — arkitektonisk
+   umuliggjort, ikke kun aftalt.
+
+**Ja — M13 er 100% færdig ifølge Definition of Done (for det scope
+brugeren faktisk satte).**
+
+**Er projektet klar til næste milestone?**
+Ja, med tre åbne punkter: (a) den oprindelige M11 ("To rigtige Candidate
+Providers") er stadig ikke bygget; (b) hvornår/hvordan Observability
+faktisk kobles til `applicationLayer` er en åben, fremtidig
+integrationsopgave; (c) om ADR-22 skal opdateres (fra M12) er stadig
+ikke afgjort.
 
 ---
 

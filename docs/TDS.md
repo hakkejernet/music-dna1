@@ -1289,6 +1289,77 @@ ADR-16, når/hvis den besluttes) — bevidst ikke løst her.
   ADR-28s kontrakt garanterer formen, denne ADR garanterer at intet
   teknisk lækker igennem den.
 
+### ADR-30 — Observationer er snapshots; de beskriver hændelser, men ændrer aldrig systemets tilstand
+
+- **Beslutning:** En `Observation` (M13) er et frosset, uforanderligt
+  øjebliksbillede af noget der allerede er sket. Den optager en
+  hændelse, den forårsager aldrig én — at oprette en `Observation`
+  har ingen effekt på `UserDNA`, en `Candidate`, en `RankedCandidate`,
+  eller noget andet domæneobjekt, og en `Observation`, når den først
+  er skabt, kan aldrig selv ændres (`Object.freeze()`, ikke kun en
+  `readonly`-typeannotation).
+- **Baggrund:** M13 gjorde immutable observationer til en bindende regel
+  (Rule 2/11). Uden denne ADR ville "observation" kunne glide mod at
+  betyde noget der *også* opdaterer en tæller eller cache et sted i
+  domænet, "for at spare et opslag senere" — præcis den slags
+  bekvemmelighed der gradvist gør en målings-mekanisme til endnu en
+  skjult skrive-vej ind i domænet.
+- **Alternativer overvejet:** (a) lad en `Observation` bære en
+  mutable "annotations"-liste andre lag kunne tilføje til over tid
+  (fx en senere brugt-til-læring-markering); (b) lad
+  `InMemoryObservationSink` opdatere et løbende, muterbart
+  sammendrag ved siden af den rå observationsliste, som en
+  ydelses-optimering.
+- **Hvorfor denne løsning:** Begge alternativer introducerer mutabel
+  tilstand et sted en `Observation`, eller dens container, kunne
+  ændres efter oprettelse — det ville underminere selve beviset for
+  determinisme (Rule 8/10): en metrik beregnet på "de samme"
+  observationer kunne pludselig give et andet resultat, hvis en af dem
+  var blevet stille opdateret imellem de to beregninger. Et
+  frosset snapshot gør det umuligt, ikke kun usandsynligt.
+- **Konsekvenser:** Enhver fremtidig udvidelse af en Observation-type
+  (nye felter) sker ved at tilføje en ny, separat Observation — aldrig
+  ved at mutere en eksisterende. En fremtidig persisterings-milestone
+  (Rule 7 udskyder den) skal bevare denne egenskab: gemte observationer
+  må heller aldrig opdateres in-place, kun tilføjes.
+
+### ADR-31 — Observability beregner kun afledte data; ingen metrik må påvirke ranking, learning, eller providers
+
+- **Beslutning:** Enhver funktion i `observability/metrics.ts` er en
+  ren funktion fra observationer til et tal/objekt — aldrig en
+  funktion der skriver noget tilbage, kalder et andet modul, eller på
+  nogen måde kan ændre hvad `ranking`, `learningEngine`, eller
+  `candidate-providers` gør. En metrik er altid *efterfølgende* og
+  *afledt* — den findes efter og på baggrund af, hvad domænet allerede
+  har besluttet, aldrig før eller som en del af det.
+- **Baggrund:** M13 Rule 1 og Rule 3 forbyder Observability at påvirke
+  beslutninger eller give feedback til domænet. Denne ADR gør det til
+  en permanent arkitekturgrænse, ikke kun en egenskab ved de seks
+  metrikker denne milestone tilfældigvis byggede — enhver *fremtidig*
+  metrik skal opfylde samme regel.
+- **Alternativer overvejet:** (a) lad `Calibration Score` fodres
+  tilbage til `ranking` som en justeringsfaktor, for at "lukke
+  feedback-loopet" hurtigere end en fremtidig, separat
+  provider-kvalitets-mekanisme (jf. TDS §2 candidate-providers'
+  `qualityScore`, som eksplicit er `analytics`s fremtidige ansvar, ikke
+  Observability's); (b) lad en lav `Acceptance Rate` for en bestemt
+  kilde automatisk nedjustere den kildes fremtidige `Provider
+  Contribution`.
+- **Hvorfor denne løsning:** Begge alternativer gør Observability til
+  en del af beslutnings-kæden i forklædning — nøjagtig den rolle TDS
+  allerede har tildelt et andet, fremtidigt modul (`analytics`, med sin
+  egen, separate feedback-vej til `candidate-providers`, TDS §4). At
+  lade Observability selv gøre det ville duplikere det ansvar og gøre
+  det uklart hvilket modul der rent faktisk styrer en given justering.
+  Observability måler; hvad der (om noget) skal gøres med målingen, er
+  en beslutning et helt andet, fremtidigt lag skal træffe eksplicit.
+- **Konsekvenser:** `calculateCalibrationScore()`s resultat kan læses
+  af et menneske eller en fremtidig rapporterings-milestone, men kan
+  aldrig selv udløse en ændring af en score, et signal, eller en
+  provider — nogen fremtidig "brug denne måling til at justere noget"
+  funktion hører til et andet modul (`analytics`, per TDS), aldrig
+  inde i `observability/` selv.
+
 ---
 
 ## 11. Non-functional Requirements (NFR)
