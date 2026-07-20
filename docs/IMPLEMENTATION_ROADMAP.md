@@ -740,22 +740,36 @@ rent faktisk mappes til enrichments generiske `rawMetadata`-form. Ingen
 
 ## M5 — Ranking v1 (regelbaseret DNA-lighed)
 
+**Scope-note (afløser oprindelig beskrivelse nedenfor, samme mønster som
+M3/M4):** da M5 skulle påbegyndes, indskærpede brugeren scopet
+eksplicit: succes måles IKKE på hvor "smarte" anbefalingerne virker, men
+på om Ranking Engine er en ren, deterministisk og udskiftelig komponent.
+Ni bindende regler (ren funktion/ingen sideeffekter, kun læsning,
+forklarlig score-breakdown, normal degradering ved manglende signaler,
+confidence skal vægte skalaen — ikke kun relativt, determinisme,
+eksplicit tie-break, udskiftelig kontrakt, intet netværk/UI/queue/
+feedback) styrede det faktiske arbejde, inklusive input-formen
+(`EnrichedCandidate[]`, ikke rå `TrackDNA[]`). Den oprindelige
+"Formål/Omfang/Acceptkriterier" nedenfor er bevaret som historik, men
+**erstattet** af det faktisk udførte arbejde, dokumenteret i Review
+Report'en under den.
+
 **Type:** Teknisk evne, men med brugervendt konsekvens (scoren
 eksisterer nu, selvom ingen ser den endnu i UI før M6).
 
-**Formål:** Bygge den vægtede lighedsberegning (TDS afsnit 2 + ADR-09):
+**Formål (oprindeligt):** Bygge den vægtede lighedsberegning (TDS afsnit 2 + ADR-09):
 `UserDNA` + `TrackDNA[]` → `RankedCandidate[]` med score 0-100 og
 forklaringer.
 
 **Afhængigheder:** M2 (UserDNA), M4 (TrackDNA).
 
-**Omfang:**
+**Omfang (oprindeligt):**
 - Vægtet lighedsformel pr. signal, confidence-vægtet, normaliseret
   0-100 over den aktuelle kandidat-batch.
 - Forklarings-generering (top-bidragende signaler, menneskelig-læsbar
   tekst — samme princip som v1's `explanations`).
 
-**Acceptkriterier:**
+**Acceptkriterier (oprindeligt):**
 - Givet en `UserDNA` og en pulje af `TrackDNA`, produceres en
   `RankedCandidate[]` sorteret efter score.
 - En kandidat der ligger tæt på `UserDNA` på de højest vægtede
@@ -774,6 +788,152 @@ af `queue`, `discovery`, eller nogen levende provider.
 **Review-punkt:** producerer scoringen intuitivt rigtige resultater på
 åbenlyse testcases (en sang der er identisk med brugerens profil bør
 scoreø højt; en modsat sang bør score lavt)?
+
+### Review Report — M5
+
+**Hvad blev bygget?**
+`src/modules/rankingEngine/` (ny mappe, se navngivnings-note nedenfor):
+- `types.ts` — `RankingEngine` (rent interface: synkron
+  `rank(userDna, candidates, now) => RankedCandidate[]`), `RankedCandidate`
+  (`candidateRef`, `trackDnaRef`, `score`, `scoreBreakdown`,
+  `explanations`, `rankedAt` — uden `sessionRef`, se afgrænsning
+  nedenfor), `ScoreBreakdown` (`genreMatch`, `mainstreamMatch`,
+  `explicitMatch`, `durationMatch`).
+- `signalGroups.ts` — den eksplicitte, dokumenterede mapping fra hvert
+  af de 4 breakdown-navne til dets katalog-signaler.
+- `scoring.ts` — `computeScore()`: for hver bucket beregnes
+  `quality * trust` (se formel-note nedenfor), derefter et samlet
+  0-100-tal som et ligevægtet gennemsnit af de buckets der faktisk
+  havde data; `explainBreakdown()` genererer menneskelig-læsbare
+  forklaringer direkte fra breakdown'et, ikke separat.
+- `ruleBasedRankingEngine.ts` — `RuleBasedRankingEngine implements
+  RankingEngine`: regelbaseret, forklarlig (TDS ADR-09), ren funktion,
+  sorterer efter score, dernæst efter `candidateRef` (streng-sammenligning,
+  ikke `localeCompare`, se afgrænsning nedenfor) ved uafgjort.
+- `ruleBasedRankingEngine.test.ts` — 12 nye tests.
+
+**Navngivnings-note, gjort eksplicit:** v1's eksisterende
+`src/modules/ranking/` (med `SimpleRanker`) er urørt — det er stadig
+den gamle recommendation-motors ranker, som ikke er del af Music DNA
+Rebuilt og ikke må ændres (`ingen kode uden for M5`). Den nye,
+TDS-definerede `ranking`-komponent er derfor lagt i en separat mappe,
+`rankingEngine/`, for at undgå navnekollision — ikke en omdøbning eller
+sletning af noget eksisterende.
+
+**Formel-note, gjort eksplicit (den vigtigste tolkning i denne
+milestone):** Rule 4 ("manglende signal skal bidrage med 0 eller
+ignoreres") og Rule 5 ("confidence 0.2 skal vægte lavere end confidence
+0.9 for et identisk match — ikke kun relativt til andre signaler") er i
+spænding med hinanden under en simpel confidence-vægtet gennemsnitsformel:
+normaliseres der (divideres med summen af vægte), forsvinder confidence's
+absolutte effekt fuldstændigt for enkelt-signal-buckets (vægten går ud
+med sig selv i tæller og nævner) — det ville opfylde Rule 4, men ikke
+Rule 5. Løsningen implementeret her: hver bucket-score er `quality * trust`,
+hvor `quality` er et confidence-vægtet gennemsnit af lighed *kun* blandt
+signaler der faktisk har data (ukendte signaler tæller hverken godt eller
+skidt — Rule 4), og `trust` er den gennemsnitlige kombinerede confidence
+over *alle* signaler i bucket'en, inklusive de ukendte (dette er hvad der
+giver Rule 5's konkrete eksempel direkte: for en enkelt-signal-bucket
+reducerer formlen til `lighed × confidence`, så 0.2 vs. 0.9 confidence på
+et identisk match giver netop 0.2 vs. 0.9). For `genreMatch` (6 signaler)
+betyder det at delvis dækning (fx kun 1 af 6 genre-signaler kendt) sænker
+`trust` uden at behandle den kendte del som et dårligt match — en ærlig,
+ikke-straffende model, konsistent med ADR-12's "confidence er en del af
+hvert signal."
+
+**Andre scope-beslutninger, gjort eksplicit:**
+- `sessionRef` (TDS §3 RankedCandidate) er udeladt. Feltet forudsætter en
+  `RecommendationSession` — et queue/discovery-begreb Rule 9 eksplicit
+  forbyder Ranking Engine at kende til. At udfylde det er en fremtidig
+  opgave for det modul der rent faktisk opretter en session (M6), ikke
+  for ranking selv.
+- `rank()` er synkron, ikke async som `CandidateProvider`/`Enricher`
+  (M3/M4). De to er async fordi en *fremtidig* implementation plausibelt
+  kunne have brug for I/O (en rigtig API, for enrichments vedkommende).
+  Ranking har ingen sådan fremtid — Rule 9 forbyder netværk permanent,
+  ikke kun i denne milestone — så "ren funktion" (Rule 1) er taget
+  bogstaveligt.
+- Ingen `deepFreeze()` (i modsætning til M4's `EnrichmentPipeline`).
+  `EnrichmentPipeline` fryser defensivt fordi den er en orkestrator der
+  kalder *flere, uafhængige, potentielt fejlbarlige* enrichers — samme
+  rolle som `CandidateAggregator` har for providers. `RuleBasedRankingEngine`
+  har ingen indre plugin-grænse at forsvare (den er selv "bladet", ikke
+  orkestratoren); en fremtidig ranking-orkestrator, hvis der nogensinde
+  bliver flere samtidige ranking-strategier, ville være det rette sted
+  for en sådan frysning — ikke den enkelte, i sig selv rene, algoritme.
+  Immutability er derfor bevist ved ligheds-test (før/efter-snapshot),
+  samme mønster som M3's `CandidateAggregator`-tests, ikke ved en
+  strukturel frysning.
+- Tie-break bruger `<`/`>` på rene strenge, ikke `.localeCompare()` —
+  locale-bevidst sammenligning kan variere med ICU-version mellem
+  runtime-miljøer, hvilket ville gøre selve tie-break'et
+  ikke-deterministisk tværs af miljøer (Node under test vs. browser i
+  produktion) — præcis det Rule 6/7 forbyder.
+
+**Hvilke tests blev kørt?**
+`npm run test` → 64/64 grønne (52 fra M1-M4 + 12 nye). `npx tsc -b`,
+`npm run lint`, `npm run build` alle grønne og uændrede for al
+eksisterende kode (inklusive v1's urørte `modules/ranking`).
+
+**Bevis for determinisme:** samme `(userDna, candidates, now)` kaldt to
+gange → `toEqual`-identisk resultat.
+
+**Bevis for immutability:** `userDna` og hver candidate er byte-identiske
+(`toEqual` mod en før-snapshot) efter `rank()`; funktionen returnerer en
+ny, uafhængig array hver gang.
+
+**Bevis for tie-break:** to kandidater med garanteret identisk score
+(identisk perfekt match) rangeres i samme rækkefølge (`candidate-a` før
+`candidate-b`) uanset om de blev givet som `[a, b]` eller `[b, a]` til
+`rank()` — beviser uafhængighed af input-rækkefølge, ikke kun at
+sorteringen er "stabil" på én bestemt kørsel.
+
+**Bevis for score-breakdown:** hver `RankedCandidate` har alle 4 navngivne
+felter til stede altid (også når de er 0); `explanations` er udledt
+direkte af breakdown'et (ikke en separat, potentielt inkonsistent
+beregning) og er en tom liste — ikke en opfundet tekst — når intet kunne
+bestemmes.
+
+**Bevis for korrekt håndtering af confidence:** identisk perfekt match
+ved confidence 0.2 vs. 0.9 giver bucket-scoren 0.2 vs. 0.9 (ikke kun en
+relativ forskel, men de facto disse tal) og en lavere samlet score for
+0.2-tilfældet; to signaler med hhv. confidence 0.1 og 0.95 og identisk
+værdi-match giver en `genreMatch` der ligger strengt mellem 0 og 1 — aldrig
+behandlet som lige sikre.
+
+**Bevis for korrekt håndtering af manglende signaler:** en candidate med
+helt tomme signaler ranker til en gyldig `RankedCandidate` med score 0,
+uden throw; et enkelt kendt signal i en 6-signals-bucket giver en
+bucket-score strengt mellem 0 og 1 (den kendte del straffes ikke, men
+den ukendte del tælles heller ikke som bekræftet); en tom candidate-liste
+giver en tom result-liste, ikke en fejl.
+
+**Er milestone 100% færdig ifølge Definition of Done?**
+1. Acceptkriterier (de nye, brugerdefinerede regler) opfyldt — ja, se
+   bevisafsnittene ovenfor. 2. Tests består — ja, 64/64. 3. Ingen
+   TODO/placeholder — ja. 4. Dokumentation opdateret — ja, denne Review
+   Report plus inline-kommentarer i koden (særligt formel-noten i
+   `scoring.ts`). 5. Fungerer isoleret uden fremtidige milestones — ja,
+   intet import af `queue`, `discovery`, `feedback`, UI, `analytics`,
+   eller v1's `modules/ranking` noget sted i `rankingEngine/`; kun
+   type-imports fra `candidateProviders`, `enrichment`, `trackDna`,
+   `userDna` (data-formen, ikke deres logik). 6. Ingen kendte kritiske
+   fejl — ja. 7. Reviewet mod PRD/TDS/ADR — ja: `sessionRef`-udeladelsen
+   og den synkrone kontrakt er begge afgrænsninger af TDS' eksisterende
+   §3/§2-beskrivelse, ikke ændringer af den; ADR-09 (forklarlig, ikke
+   en sort boks) er direkte efterlevet af at breakdown *er* beregningen,
+   ikke en efterrationalisering. 8. Demonstrerer den tilsigtede værdi —
+   ja: beviset er ikke om anbefalingerne "virker godt", men at
+   `RankingEngine` er ren, deterministisk, og at en anden implementation
+   (fx en fremtidig ML-ranker) kan indsættes bag samme interface uden at
+   noget andet i systemet ændres.
+
+**Ja — M5 er 100% færdig ifølge Definition of Done (for det scope
+brugeren faktisk satte).**
+
+**Er projektet klar til næste milestone?**
+Ja. M6 (Queue + Discovery koblet til det nye flow) kan nu bygges på et
+`RankingEngine` der er bevist rent, deterministisk og udskifteligt.
 
 ---
 

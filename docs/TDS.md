@@ -811,6 +811,45 @@ kun til den nuværende kode.
   overtrumfer en svagere) kræver en ny, eksplicit beslutning — ikke en
   stille overskrivning.
 
+### ADR-16 — Samlet score er algoritmisk og foranderlig; ScoreBreakdown er en stabil forklaringskontrakt
+
+- **Beslutning:** Den samlede `score` (0-100) er resultatet af en
+  algoritmisk beregning og kan udvikle sig over tid — en fremtidig
+  ranking-implementation kan ændre *hvordan* score beregnes.
+  `ScoreBreakdown` er derimod en forklaringskontrakt: den skal fortsat
+  kunne fortolkes ens på tværs af forskellige ranking-implementationer,
+  ikke kun af den der producerede den.
+- **Baggrund:** M5 gjorde `ScoreBreakdown` til en del af
+  `RankingEngine`s offentlige kontrakt (Rule 3 + Rule 8) netop for at
+  gøre enhver score forklarlig. Uden denne ADR ville en fremtidig,
+  fx ML-baseret, ranker kunne opfinde sit eget breakdown-format, og
+  "forklarlig score" ville kun betyde noget for den ranker der lige nu
+  er aktiv — ikke en egenskab ved systemet.
+- **Alternativer overvejet:** (a) lad `scoreBreakdown` være en fri,
+  implementation-specifik struktur (`Record<string, unknown>`), og lad
+  hver ranker definere sin egen forklaringsform; (b) gør kun `score`
+  til den offentlige kontrakt, og behandl breakdown som et internt,
+  ranker-specifikt debug-felt uden garanti.
+- **Hvorfor denne løsning:** Begge alternativer ville gøre ADR-09
+  ("Ranking er forklarlig, ikke en sort boks") til en egenskab ved den
+  *nuværende* implementation snarere end ved arkitekturen — det ville
+  bryde Rule 8's udskiftelighedskrav i praksis, selv hvis
+  `RankingEngine`-interfacet formelt var uændret: en downstream-forbruger
+  (fx en fremtidig UI eller `analytics`) kunne ikke fortsætte at vise
+  eller måle "hvorfor fik denne sang sin score" hen over et
+  ranker-bytte. Ved at holde `ScoreBreakdown`s form (de navngivne
+  buckets) stabil, mens den bagvedliggende beregning af både `score` og
+  bucket-værdierne frit kan ændre sig, bevares forklarligheden som en
+  systemegenskab, ikke en implementationsdetalje.
+- **Konsekvenser:** En fremtidig ranking-implementation (regelbaseret
+  v2, ML-baseret, eller andet) skal fortsat udfylde de samme
+  `ScoreBreakdown`-felter meningsfuldt, selv hvis dens interne
+  beregningsmetode er helt anderledes end M5's `quality × trust`-model.
+  Tilføjelse af et nyt breakdown-felt (fx hvis flere signal-grupper
+  senere tages i brug, jf. M5's Review Report) er en eksplicit,
+  dokumenteret udvidelse af kontrakten — ikke noget en enkelt
+  ranker-implementation kan gøre ensidigt.
+
 ---
 
 ## 11. Non-functional Requirements (NFR)
