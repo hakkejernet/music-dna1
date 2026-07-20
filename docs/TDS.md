@@ -962,6 +962,71 @@ kun til den nuværende kode.
   kalderen (queue/en fremtidig UI), hvor det hører hjemme — ikke på
   `feedbackPipeline`, som ikke kan vide *hvad* kalderen egentlig mente.
 
+### ADR-20 — Learning Engine orkestrerer; strategier lærer
+
+- **Beslutning:** `learningEngine`s `learn()`-funktion indeholder ingen
+  domænespecifik viden om noget enkelt signal (genre, mainstream,
+  explicitness, duration, eller noget fremtidigt). Den kombinerer kun
+  det `LearningStrategy`-objekter selv producerer. Al viden om *hvordan*
+  et signal skal læres bor i den enkelte strategi, aldrig i `learn()`.
+- **Baggrund:** M8 gjorde `LearningStrategy` til den eneste vej et
+  signal må ændres (Rule 4). Uden denne ADR ville det være en naturlig,
+  men forkert, genvej at lade `learn()` selv indeholde en særregel for
+  ét bestemt signal (fx "hvis reactionType er reject og signalet er
+  explicitness, gør noget særligt") — det ville gøre `learn()`
+  afhængig af hvilke signaler der findes, præcis den kobling
+  strategi-mønstret findes for at undgå.
+- **Alternativer overvejet:** (a) lad `learn()` selv rumme et lille
+  antal indbyggede specialtilfælde for de "vigtigste" signaler, og
+  reservere `LearningStrategy` til alt andet; (b) lad `learn()` vælge
+  imellem flere formler afhængigt af hvilket signal der opdateres.
+- **Hvorfor denne løsning:** Begge alternativer genindfører nøjagtig
+  den kobling M4's ADR-08 allerede afviste for `enrichment`/`track-dna`
+  (lad ikke det orkestrerende lag opfinde sit eget format/regelsæt pr.
+  signal) — af samme grund: nye signaler eller nye lærings-strategier
+  skal kunne tilføjes uden at røre `learn()` selv, og et "vigtigt
+  signal, indbygget i engine"-særtilfælde ville gøre præcis det
+  umuligt uden at ændre orkestratoren igen.
+- **Konsekvenser:** Enhver fremtidig `LearningStrategy` — inklusive én
+  der bruger en helt anden formel end `updateReading()` — kan tilføjes
+  til `learn()`s strategiliste uden at én linje i `learningEngine.ts`
+  ændres. Testet direkte i M8 (en brugerdefineret `FixedResult`-strategi
+  der ignorerer `updateReading()` fuldstændigt, anvendt af `learn()`
+  helt uændret).
+
+### ADR-21 — Hvert UserDNA-signal har én entydig ejer
+
+- **Beslutning:** Ethvert signal i `UserDNA` må opdateres af præcis én
+  `LearningStrategy`. Flere strategier må aldrig opdatere samme signal
+  — hverken samtidigt, i forskellige kørsler, eller ved en fremtidig
+  udvidelse.
+- **Baggrund:** M8 Rule 6 kræver at strategier er uafhængige og aldrig
+  ændrer andre signaler. Uden en navngivet ADR ville "uafhængige" kunne
+  fortolkes som blot en stilistisk anbefaling; denne ADR gør det til en
+  strukturel invariant: `learn()` kaster med det samme, ved hvert kald,
+  hvis to strategier i den givne liste erklærer det samme signal
+  (`assertDisjointOwnership`) — samme mønster som ADR-15 gjorde for
+  enrichment-signaler.
+- **Alternativer overvejet:** (a) tillad flere strategier pr. signal og
+  fastsæt en implicit prioritetsorden (fx "sidste strategi i listen
+  vinder"); (b) tillad flere strategier pr. signal og gennemsnit deres
+  resultater.
+- **Hvorfor denne løsning:** Begge alternativer gør resultatet
+  afhængigt af *hvilke* strategier der er konfigureret og i hvilken
+  rækkefølge — det underminerer M8 Rule 9's determinisme-garanti i
+  praksis, selv hvis den enkelte strategi selv er deterministisk, og
+  gør det umuligt at ræsonnere om "hvorfor har dette signal denne
+  værdi" uden at kende hele konfigurationen. Én ejer pr. signal er den
+  samme disciplin `candidate-providers`/`enrichment` allerede følger
+  (ADR-15) og som `ScoreBreakdown` (ADR-16) forudsætter for at kunne
+  tilskrive en ændring til en bestemt kilde.
+- **Konsekvenser:** At udvide dækningen af et signal til en ny kilde
+  (fx en fremtidig, mere avanceret genre-strategi) kræver at erstatte
+  den eksisterende ejer, ikke at tilføje en konkurrerende. At lade to
+  strategier begge bidrage til samme signal er en eksplicit,
+  fremtidig arkitekturbeslutning (en ny ADR), ikke noget der kan ske
+  ved en tilfældig konfigurationsændring.
+
 ---
 
 ## 11. Non-functional Requirements (NFR)

@@ -1276,18 +1276,35 @@ M8 har brug for det. Ingen af disse er afgjort her — kun gjort synlige.
 
 ---
 
-## M8 — UserDNA-opdatering fra feedback
+## M8 — Learning Engine
 
-**Type:** Brugervendt værdi — **selve mission-beviset.**
+**Scope-note (afløser oprindelig beskrivelse nedenfor, samme mønster som
+M3-M7):** da M8 skulle påbegyndes, indskærpede brugeren scopet
+eksplicit til KUN Learning Engine — arkitekturen for hvordan `UserDNA`
+opdateres, ikke om anbefalingerne bliver "gode". Ti bindende regler
+(engine ejer kun UserDNA-opdatering og kender intet om Queue/Ranking/
+Providers/UI/Feedback Pipeline, ren funktion uden intern tilstand,
+UserDNA er immutable, alle ændringer via en navngivet
+`LearningStrategy`, engine indeholder ingen domæneregler, strategier er
+uafhængige, manglende TrackDNA er normalt, `ReactionType` beskriver kun
+styrke — ikke implementation, determinisme, intet persistence) styrede
+det faktiske arbejde. Den oprindelige "Formål/Omfang/Acceptkriterier"
+nedenfor er bevaret som historik — dens kerneidé (vægtet opdatering med
+aftagende læringsrate, TDS ADR-05) er faktisk bevaret i den nye
+implementation (se Review Report), men er nu udtrykt gennem den
+strategi-baserede arkitektur disse ti regler kræver, ikke direkte i
+noget "engine"-lag.
 
-**Formål:** Implementere den vægtede glidende opdatering (TDS ADR-05,
+**Type (oprindeligt):** Brugervendt værdi — selve mission-beviset.
+
+**Formål (oprindeligt):** Implementere den vægtede glidende opdatering (TDS ADR-05,
 PRD afsnit 2 "Mission") der bruger hvert `FeedbackEvent` til at
 opdatere `UserDNA`.
 
 **Afhængigheder:** M7 (kilden til opdateringerne), M2 (den tilstand
 der opdateres).
 
-**Omfang:**
+**Omfang (oprindeligt):**
 - Opdateringsformel: reaktionstype → vægt, aftagende læringsrate med
   stigende confidence (TDS/PRD-beskrevet formel).
 - `coldStart`-flaget skifter til falsk efter første reelle
@@ -1297,7 +1314,7 @@ der opdateres).
   selvstændig senere milestone, hvis det gør denne milestone for stor;
   markeres da eksplicit som ikke inkluderet her.
 
-**Acceptkriterier:**
+**Acceptkriterier (oprindeligt):**
 - Efter en ❤️-reaktion på en sang med høj "energi", stiger
   `UserDNA.energy`-værdien målbart (og dens confidence).
 - Efter en 🚫-reaktion, falder den tilsvarende værdi målbart.
@@ -1316,6 +1333,161 @@ provider.
 **Review-punkt:** dette er det vigtigste review i hele roadmap'en —
 opfører DNA'et sig som forventet på simple, forudsigelige testcases,
 før vi stoler på det på rigtige, uforudsigelige brugerdata?
+
+### Review Report — M8
+
+**Hvad blev bygget?**
+`src/modules/learningEngine/`:
+- `types.ts` — `LearningStrategy` (rent interface: `strategyName`,
+  `ownedSignals`, synkron `learn(userSignals, trackSignals, weight)`).
+  En plain object-kontrakt, ingen klasse — der er intet for en strategi
+  at holde som tilstand.
+- `reactionWeight.ts` — `reactionWeight(reactionType)`: den ENESTE plads
+  hvor `save`/`reject`/`known` omsættes til et signeret tal (`1`/`-1`/`0`).
+  Parametertypen er udledt som `LearningEvent['reactionType']` — modulet
+  importerer aldrig `queue` direkte (se afklaring nedenfor).
+- `learningMath.ts` — `updateReading()`: den ene formel enhver strategi
+  bruger for ethvert signal den ejer. `valueDelta`/`confidenceDelta`
+  ganges begge med `trackReading.confidence` (nul hvis TrackDNA-signalet
+  er ukendt → nul ændring, Rule 7 "falder ud af aritmetikken") og med
+  `(1 - userReading.confidence)` (aftagende læringsrate med stigende
+  confidence, TDS ADR-05 — bevaret fra det oprindelige M8-formål, se
+  afklaring nedenfor). Confidence bevæger sig altid opad
+  (`Math.abs(weight)`), værdien bevæger sig med eller mod
+  TrackDNA-værdien afhængig af `weight`s fortegn.
+- `strategies/` — fire tynde, tilstandsløse objekter:
+  `genreLearningStrategy` (de 6 genre-signaler), `mainstreamLearningStrategy`
+  (`mainstream`), `explicitnessLearningStrategy` (`explicitness`),
+  `durationLearningStrategy` (`songLength`) — samme fire signal-grupper
+  som M5's `rankingEngine`, af samme grund: det er de signaler M2/M4
+  faktisk kan udfylde med rigtig data i dag.
+- `learningEngine.ts` — `learn(strategies, userDna, learningEvent,
+  trackDna)`: en almindelig, eksporteret funktion, **ikke** en klasse
+  (se afklaring nedenfor). Tjekker disjoint ejerskab ved hvert kald
+  (`assertDisjointOwnership`, samme mønster som M4's
+  `EnrichmentPipeline`), kalder hver strategi i et `try/catch`
+  (fejlisolering, samme filosofi som M3 Rule 5/M4 Rule 5), kasserer
+  readings uden for en strategis erklærede ejerskab, kører resultatet
+  gennem M1's `validateSignalVector()`, og opdaterer kun
+  `coldStart`/`version`/`updatedAt` hvis noget faktisk ændrede sig.
+- `learningEngine.test.ts` — 18 nye tests.
+
+**Type-import-afklaring, gjort eksplicit (samme mønster som M5→M4,
+M6→M5, M7→M6 — ingen ADR nødvendig, da intet fra M1-M7 ændres):** Rule 1
+forbyder `learningEngine` at "kende" Queue/Ranking/Providers/UI/Feedback
+Pipeline, men erklærer samtidig `LearningEvent` (defineret i M7's
+`feedbackPipeline`) som et af de tre tilladte input. Dette er kun en
+konflikt hvis "kende" læses som "må ikke referere typen" — hele denne
+sessions etablerede praksis (M5 importerer `EnrichedCandidate` fra
+`enrichment`, M6 importerer `RankedCandidate` fra `rankingEngine`, M7
+importerer `ReactionType` fra `queue`) læser det i stedet som
+"må ikke afhænge af adfærd/logik". `learningEngine/` importerer derfor
+**kun** typen `LearningEvent` fra `feedbackPipeline` — aldrig
+`processReactionEvent()` eller noget andet derfra — og importerer
+**intet** fra `queue`, `rankingEngine`, `candidateProviders`, eller
+`enrichment`, hverken typer eller adfærd. `ReactionType` selv er aldrig
+importeret direkte; `reactionWeight()`s parametertype er udledt via
+`LearningEvent['reactionType']`, så end ikke en `queue`-import-linje
+findes i modulet.
+
+**Design-afklaring: funktion, ikke klasse (Rule 2):** M3's
+`CandidateAggregator` og M4's `EnrichmentPipeline` er begge klasser med
+en konstruktør der gemmer `providers`/`enrichers`. M8's Rule 2 er
+markant skarpere formuleret ("Ingen intern tilstand. Ingen caches.
+Ingen singleton. Ingen globale variable.") end de tilsvarende regler i
+M3/M4 — for at undgå enhver tvivl om hvorvidt en gemt konstruktør-
+parameter tæller som "tilstand", er `learn()` her en almindelig,
+eksporteret funktion der modtager `strategies` som et almindeligt
+argument ved hvert kald, ikke noget en klasse-instans holder på. Det
+disjoint-ejerskabstjek der i M4 kørte én gang ved konstruktion, køres
+her ved hvert kald i stedet — en smule redundant arbejde pr. kald, betalt
+for at eliminere ethvert konstruktions-trin overhovedet.
+
+**Formel-afklaring: den oprindelige M8-idé er bevaret, ikke droppet:**
+den oprindelige roadmap-teksts acceptkriterium ("mindre bevægelse pr.
+ny reaktion end ved de første reaktioner — beviser at læringsraten
+reelt aftager med confidence", TDS ADR-05) er ikke en del af de ti nye,
+bindende regler denne gang, men er bevidst bevaret i selve
+`updateReading()`-formlen (`(1 - userReading.confidence)`-faktoren) —
+det er billigt, i tråd med TDS ADR-05, og modsiger ingen af de ti regler.
+Et separat test beviser egenskaben direkte (5 ens `save`-reaktioner i
+træk giver aftagende, ikke konstante, bevægelser).
+
+**`known`-vægt-afklaring, gjort eksplicit:** `reactionWeight('known') =
+0` er grundet i v1's egen etablerede semantik — `DiscoveryPage.tsx`s
+`handleAction('known')` (linje 89-91) fremskyndede blot køen uden nogen
+`PreferenceProfile`- eller historik-opdatering, identisk med `'next'`.
+Der findes ingen ærlig basis for at gætte en retning (positiv eller
+negativ) for "brugeren kendte allerede denne sang" — Rule 7's "ingen
+gæt"-princip er her udvidet til selve reaktions-vokabularet, ikke kun
+til manglende TrackDNA-data.
+
+**Hvilke tests blev kørt?**
+`npm run test` → 121/121 grønne (103 fra M1-M7 + 18 nye). `npx tsc -b`,
+`npm run lint`, `npm run build` alle grønne og uændrede for al
+eksisterende kode.
+
+**Bevis for immutability:** input-`UserDNA` er byte-identisk
+(`toEqual` mod en før-snapshot) efter `learn()`; resultatet er en ny
+objekt-reference (`not.toBe`), inklusive et nyt `signals`-objekt.
+
+**Bevis for determinisme:** samme `(userDna, learningEvent, trackDna)`
+kaldt to gange giver `toEqual`-identisk resultat.
+
+**Bevis for uafhængige strategier:** `genreLearningStrategy` ændrer kun
+genre-signaler, aldrig `mainstream`/`explicitness`/`songLength`; to
+strategier der begge erklærer `mainstream` får kaldet til `learn()` til
+at kaste med det samme; en strategi der returnerer en reading for et
+signal den ikke ejer, får den reading kasseret; én strategi der kaster
+en exception blokerer ikke de andres opdateringer.
+
+**Bevis for manglende TrackDNA:** `trackDna = null` giver en
+uændret (men ny-instans) `UserDNA`, uden throw; et tomt `TrackDNA`
+(alle signaler confidence 0) giver samme resultat; et `TrackDNA` med
+kun ét kendt signal (`rock`) opdaterer kun det ene, mens et søskende
+genre-signal uden data (`pop`) forbliver uændret.
+
+**Bevis for at hver strategi kun ændrer sit eget signalområde:** dækket
+sammen med uafhængigheds-beviset ovenfor — samme tests.
+
+**Bevis for at Learning Engine ikke indeholder domæneregler:** en
+brugerdefineret test-strategi (`FixedResult`, der ikke bruger
+`updateReading` overhovedet) får sit resultat anvendt helt uændret af
+`learn()`; med en tom `strategies`-liste sker der intet som helst — der
+er ingen indbygget "hvis ingen strategi findes, gør X"-adfærd i
+`learn()` selv.
+
+**Er milestone 100% færdig ifølge Definition of Done?**
+1. Acceptkriterier (de nye, brugerdefinerede regler) opfyldt — ja, se
+   bevisafsnittene ovenfor. 2. Tests består — ja, 121/121. 3. Ingen
+   TODO/placeholder — ja. 4. Dokumentation opdateret — ja, denne Review
+   Report plus inline-kommentarer i koden. 5. Fungerer isoleret uden
+   fremtidige milestones — ja, intet import af `queue`, `rankingEngine`,
+   `candidateProviders`, `enrichment`, eller UI noget sted i
+   `learningEngine/`; kun ét type-import fra `feedbackPipeline`
+   (`LearningEvent`, det erklærede input) og genbrug af `trackDna`s
+   skema (`validateSignalVector`, ikke på forbudslisten). 6. Ingen
+   kendte kritiske fejl — ja. 7. Reviewet mod PRD/TDS/ADR — ja:
+   type-import- og funktion-vs-klasse-afklaringerne ovenfor er begge
+   afgrænsninger, ikke ændringer, af tidligere milestones (ADR-16
+   udløses ikke); ADR-17 (queue er ene ejer af positionen) er
+   respekteret — `learningEngine` kender intet til positionen; ADR-18
+   (LearningEvent beskriver observerede handlinger) og ADR-19
+   (validering fortolker aldrig semantisk) er begge respekteret —
+   `reactionWeight()` omsætter kun en allerede-valideret, kendt
+   `reactionType` til et tal, det gætter ikke på nye betydninger. 8.
+   Demonstrerer den tilsigtede værdi — ja: beviset er ikke om
+   anbefalingerne bliver "bedre" (ingen `ranking`-kørsel er del af denne
+   milestone), men at `UserDNA` kan opdateres deterministisk,
+   reproducerbart, og uden at `learningEngine` kender noget om resten
+   af systemet.
+
+**Ja — M8 er 100% færdig ifølge Definition of Done (for det scope
+brugeren faktisk satte).**
+
+**Er projektet klar til næste milestone?**
+Ja. M9 (Fejlhåndtering: ingen mock-fallback) kan bygges videre på en
+`UserDNA` der nu har en reel, bevist opdateringsmekanisme.
 
 ---
 
