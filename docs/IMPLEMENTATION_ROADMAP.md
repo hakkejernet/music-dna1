@@ -561,9 +561,22 @@ scope-hul-noten ovenfor og forslaget til M11 nedenfor.
 
 ## M4 — Enrichment af én kilde
 
+**Scope-note (afløser oprindelig beskrivelse nedenfor, samme mønster som
+M3):** da M4 skulle påbegyndes, indskærpede brugeren scopet eksplicit:
+succes måles IKKE på hvor mange signaler der kan udfyldes, men på om
+Enrichment er korrekt, deterministisk og udvidbart — bevist med
+deterministiske test-kandidater, ingen netværkskald, ingen eksterne
+API'er. Otte bindende regler (immutability, forbudt viden om
+UserDNA/Ranking/Feedback/Queue/Discovery/UI, én ansvarlig enricher pr.
+signal, obligatorisk confidence, normal degradering ved manglende
+metadata, determinisme, sporbar signal-oprindelse, ingen netværk) styrede
+det faktiske arbejde. Den oprindelige "Formål/Omfang/Acceptkriterier"
+nedenfor er bevaret som historik, men **erstattet** af det faktisk
+udførte arbejde, dokumenteret i Review Report'en under den.
+
 **Type:** Teknisk evne.
 
-**Formål:** Bygge den første konkrete enricher: Last.fm-tags/metadata
+**Formål (oprindeligt):** Bygge den første konkrete enricher: Last.fm-tags/metadata
 → `TrackDNA` (delmængde af M1's katalog en tag-baseret kilde
 plausibelt kan bidrage til).
 
@@ -592,6 +605,136 @@ eller `user-dna`.
 **Review-punkt:** er mappingen fra tags til signaler rimelig, eller
 tydeligt skæv (fx overvurderer den "mainstream" for alt med mange
 lyttere)?
+
+### Review Report — M4
+
+**Hvad blev bygget?**
+`src/modules/enrichment/`:
+- `types.ts` — `Enricher` (rent interface: `enricherName`,
+  `ownedSignals`, async `enrich(candidate)`), `EnrichedCandidate`
+  (`{candidate, trackDna, enrichmentMetadata}`), `EnrichmentMetadata`
+  (`enricherNames`, `signalSources`, `enrichedAt`).
+- `deepFreeze.ts` — rekursiv `Object.freeze` af hele Candidate-grafen før
+  nogen enricher rører den; gør immutability til en strukturel garanti,
+  ikke en konvention.
+- `enrichmentPipeline.ts` — `EnrichmentPipeline`, den eneste kode der
+  kender til mere end én enricher. Konstruktøren afviser (kaster) hvis to
+  enrichers erklærer samme signal (`assertDisjointOwnership`); `enrich(candidate, now)`
+  deep-fryser candidate'en, kører alle enrichers via `Promise.allSettled`
+  (fejlisolering), kasserer enhver reading en enricher returnerer for et
+  signal den ikke selv har erklæret ejerskab over, kører resultatet gennem
+  M1's `validateSignalVector()`, og udregner `enrichmentCompleteness`.
+- `enrichers/tagBasedEnricher.ts` — ejer de 6 genre-signaler; læser
+  `rawMetadata.tags` fra en hvilken som helst contribution. Fast confidence
+  `0.5` (direkte per-track-tag-evidens, stærkere end M2's biblioteks-
+  aggregat, men stadig kun nøgleord-match). Med tags til stede får *alle*
+  6 genre-signaler en reading (både match=1 og ikke-match=0) — en reel
+  bestemmelse, ikke et gæt; helt uden tags forbliver alle 6 ved default.
+- `enrichers/explicitMetadataEnricher.ts` — ejer `explicitness`; læser
+  `rawMetadata.explicit`. Fast confidence `0.9` (direkte provider-metadata,
+  ikke en inferens — samme kategori evidens som v1's Spotify `explicit`-felt).
+- `enrichmentPipeline.test.ts` — 15 nye tests.
+
+**Bindende regler → hvor de er implementeret (ikke kun hævdet):**
+
+| Regel | Implementering |
+|---|---|
+| 1. Ingen mutation, Candidate genskabelig | `deepFreeze()` før enrichers kører; `EnrichedCandidate.candidate` er samme reference, aldrig kopieret/ændret |
+| 2. Intet kendskab til UserDNA/Ranking/Feedback/Queue/Discovery/UI | `enrichment/` importerer kun fra `candidateProviders` og `trackDna` — verificeret ved gennemlæsning af alle imports i modulet |
+| 3. Én ansvarlig enricher pr. signal, ingen implicit overskrivning | `assertDisjointOwnership()` kaster ved konstruktion ved overlap; pipeline kasserer desuden runtime-readings uden for en enrichers erklærede `ownedSignals` |
+| 4. Alle signaler har confidence, intet gæt | `PartialSignalContribution` er `Partial<SignalVector>` — hver reading er en fuld `{value, confidence}`; udeladte signaler får `validateSignalVector()`s neutrale default (confidence 0), aldrig en gættet værdi |
+| 5. Manglende metadata er normalt, ingen fejl | `findTags`/`findExplicitFlag` returnerer `null` ved manglende felt → tomt bidrag, ikke et throw; `Promise.allSettled` isolerer en enrichers eget throw fra resten |
+| 6. Determinisme | `now` er et eksplicit parameter (aldrig `Date.now()` internt); ingen anden ikke-deterministisk kilde (intet netværk, ingen tilfældighed) |
+| 7. Sporbar TrackDNA (value/confidence/source) | `value`/`confidence` er allerede en del af `SignalReading` (M1); `source` er nu faktisk implementeret som `EnrichmentMetadata.signalSources` — se afgrænsning nedenfor |
+| 8. Ingen netværk/eksterne API'er | Ingen `fetch`/import af `modules/lastfm` eller `modules/spotify` noget sted i `enrichment/`; alle tests bruger `makeCandidate()`-fixtures |
+
+**Afgrænsning af Regel 7, gjort eksplicit:** reglen tillader at source
+"først implementeres senere" — men da pipelinen alligevel må vide hvilken
+enricher der rørte hvilket signal (for at kunne afvise out-of-contract-
+readings, Regel 3), var det billigt at rent faktisk registrere det, i
+stedet for kun at hævde arkitekturen *kunne* understøtte det. Det er
+lagt i `EnrichmentMetadata.signalSources` — et felt på enrichments eget
+output — og **ikke** i `TrackDNA`/`SignalReading` selv, som stadig kun har
+`{value, confidence}` (uændret siden M1). At udvide `SignalReading` med et
+`source`-felt hører til `track-dna`-modulets skema (M1s ejerskab), ikke
+til enrichment, og er derfor ikke gjort her — samme grænsedragning som
+M2/M3's egne scope-noter.
+
+**Andre scope-beslutninger, gjort eksplicit:**
+- `trackId` sættes til `candidate.candidateId`. Der findes endnu ingen
+  separat track-id-udstedelsestjeneste (TDS nævner `trackId` som "intern,
+  kanonisk identifikator, uafhængig af enkelte providers ID-skemaer") — at
+  bygge én er ikke del af Enrichment og ikke bedt om her. Dette er den
+  simpleste ærlige værdi tilgængelig nu, ikke en påstand om at den er
+  kanonisk på tværs af providers.
+- Ingen rigtig Last.fm-tilslutning (samme mønster som M3/M11): denne
+  milestones regel 8 udelukkede eksterne API-kald, så begge enrichers
+  virker på en generisk `rawMetadata.tags`/`rawMetadata.explicit`-form, ikke
+  det faktiske Last.fm-svarskema. At mappe et rigtigt Last.fm-svar til
+  denne form er ikke gjort — det er en fremtidig ledningsopgave (jf. M11's
+  allerede planlagte Last.fm-omskrivning), ikke en del af selve
+  Enrichment-arkitekturen.
+
+**Hvilke tests blev kørt?**
+`npm run test` → 52/52 grønne (37 fra M1-M3 + 15 nye). `npx tsc -b`,
+`npm run lint`, `npm run build` alle grønne og uændrede for al
+eksisterende kode.
+
+**Bevis for immutability:** to tests — én der viser candidate'en er
+byte-identisk (`toEqual` mod en før-snapshot) efter en kørsel med en
+enricher der aktivt forsøger at mutere den (`MutatingEnricher`, forsøger
+både felt-tildeling og array-push, begge på en frossen struktur), og én
+der viser `result.candidate` er samme reference som input, ikke en kopi.
+
+**Bevis for determinisme:** samme `(candidate, now)` kaldt to gange →
+`toEqual` på hele resultatet, inklusive `enrichmentMetadata.enrichedAt`.
+
+**Bevis for korrekt confidence:** tag-match → `{value: 1, confidence: 0.5}`;
+tag-ikke-match (tags til stede, ingen match) → `{value: 0, confidence: 0.5}`;
+direkte `explicit`-metadata → `{value, confidence: 0.9}` — synligt højere
+end tag-baseret confidence, som bevidst; alle signaler intet enricher rørte
+→ confidence 0, aldrig et gæt.
+
+**Bevis for at manglende metadata ikke vælter enrichment:** tomt
+`rawMetadata` (`{}`), samt `null`/streng/tal/`undefined` som hele
+`rawMetadata`-værdien, resulterer alle i et fuldt, validt `TrackDNA` uden
+throw — alle 19 signaler til stede, alle ved default. Separat test viser
+at én enricher der altid kaster (`ThrowingEnricher`) hverken vælter
+pipelinen eller påvirker den anden enrichers bidrag; endda alle enrichers
+fejlende samtidig giver stadig et gyldigt (tomt) resultat.
+
+**Bevis for ingen implicit overskrivning:** konstruktion af en pipeline
+med to enrichers der begge erklærer `mainstream` kaster med det samme
+(`assertDisjointOwnership`), før nogen candidate kan berige noget. Separat
+test viser at en enricher som returnerer en reading for et signal den
+*ikke* har erklæret (`OutOfContractEnricher`), får den readings kasseret —
+signalet forbliver ved default, ikke ved den uautoriserede værdi.
+
+**Er milestone 100% færdig ifølge Definition of Done?**
+1. Acceptkriterier (de nye, brugerdefinerede regler) opfyldt — ja, se
+   tabellen og bevisafsnittene ovenfor. 2. Tests består — ja, 52/52.
+   3. Ingen TODO/placeholder — ja. 4. Dokumentation opdateret — ja, denne
+   Review Report plus inline-kommentarer i koden. 5. Fungerer isoleret
+   uden fremtidige milestones — ja, intet import af `userDna`, `ranking`,
+   `feedback`, `queue`, `discovery`, UI, eller `analytics` noget sted i
+   `enrichment/`. 6. Ingen kendte kritiske fejl — ja. 7. Reviewet mod
+   PRD/TDS/ADR — ja: `source`-tilføjelsen i `EnrichmentMetadata` udvider
+   ikke TDS' `TrackDNA`/`SignalReading`-skema, kun enrichments eget output;
+   ADR-08 ("TrackDNA er adskilt fra Enrichment") og ADR-14 ("Candidate
+   Aggregator er bevidst mekanisk") er begge respekteret — enrichment
+   producerer, men rangerer eller filtrerer ikke. 8. Demonstrerer den
+   tilsigtede værdi — ja: beviset er ikke antal udfyldte signaler
+   (7 af 19 med de to nuværende enrichers), men at pipelinen er
+   udvidbar (ny enricher = ingen ændring i eksisterende), fejlisoleret,
+   og aldrig gætter.
+
+**Ja — M4 er 100% færdig ifølge Definition of Done (for det scope
+brugeren faktisk satte).**
+
+**Er projektet klar til næste milestone?**
+Ja, med samme type åbne beslutning som efter M3: hvor/hvornår Last.fm
+rent faktisk mappes til enrichments generiske `rawMetadata`-form. Ingen
+ændring foretaget her — kun gjort synlig, som scope-hullerne i M3.
 
 ---
 

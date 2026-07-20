@@ -778,6 +778,39 @@ kun til den nuværende kode.
   til hvilken der er "rigtigst". Al vægtning af providerkvalitet sker
   nedstrøms, i `ranking`, aldrig her.
 
+### ADR-15 — Enricher-output er append-only
+
+- **Beslutning:** En enricher må kun producere sine egne signaler. Den
+  må aldrig overskrive en anden enrichers signaler, slette et signal,
+  eller mutere den `Candidate` den blev givet.
+- **Baggrund:** M4 gjorde hvert signal til ansvar for præcis én
+  enricher (Rule 3) og gjorde `Candidate` immutabelt ind i pipelinen
+  (Rule 1, `deepFreeze()`). Denne ADR gør den samlede konsekvens
+  eksplicit som én regel: en enrichers output kan kun *tilføje* til
+  resultatet af en enrichment-kørsel, aldrig ændre eller fjerne noget
+  en anden del af systemet allerede har produceret.
+- **Alternativer overvejet:** (a) lad en senere enricher i kørselsordenen
+  overskrive et signal en tidligere enricher allerede har udfyldt, som
+  en "sidste ord vinder"-opdateringsmekanisme; (b) lad en enricher
+  eksplicit slette et signal den vurderer er forkert udfyldt af en
+  anden kilde.
+- **Hvorfor denne løsning:** Begge alternativer kræver at en enricher
+  kender til andre enrichers' resultater eller til `Candidate`s
+  oprindelige tilstand ud over sin egen — det ville bryde M4 Rule 2's
+  isolation og gøre resultatet afhængigt af kørselsorden, hvilket også
+  underminerer determinisme (Rule 6). At holde output append-only er
+  det som lader `EnrichmentPipeline` (ikke den enkelte enricher) forblive
+  det eneste sted flere bidrag samles — samme rolle som
+  `CandidateAggregator` spiller for providers (ADR-14).
+- **Konsekvenser:** `EnrichmentPipeline` afviser allerede (Rule 3,
+  konstruktionstjek) overlappende signal-ejerskab og kasserer
+  runtime-readings uden for en enrichers erklærede ejerskab — denne ADR
+  gør den eksisterende adfærd til en navngivet, bindende beslutning i
+  stedet for en implementeringsdetalje. Enhver fremtidig enricher der
+  har brug for at *korrigere* et andet signal (fx en bedre kilde der
+  overtrumfer en svagere) kræver en ny, eksplicit beslutning — ikke en
+  stille overskrivning.
+
 ---
 
 ## 11. Non-functional Requirements (NFR)
