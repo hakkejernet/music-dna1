@@ -1,5 +1,39 @@
 # Changelog
 
+## Root cause rettet: manglende `user-top-read`-scope
+
+Kodegennemgangen (uden konsol-adgang) fandt roden til "samme 5-6 sange":
+`SCOPES` i `modules/spotify/auth.ts` har aldrig inkluderet `user-top-read`,
+som Spotify kræver for `GET /me/top/artists`. Uden det scope 403'ede
+`getTopArtists()` altid, `buildSpotifySeed()`s `Promise.all` fejlede, og
+`buildUserProfile()` endte deterministisk med tomme `seedArtistNames` —
+hver session, for alle brugere, uanset om login i øvrigt virkede.
+`LastFmRecommendationProvider` sprang derfor Last.fm helt over
+(`seedNames.length === 0`), og `loadRecommendationQueue()` faldt tilbage
+til den faste 6-track mock-batch hver gang.
+
+- Tilføjet `user-top-read` til `SCOPES` i `modules/spotify/auth.ts`.
+- Spotifys token-svar indeholder et `scope`-felt, som nu gemmes på
+  `SpotifyTokens` (nyt felt). `isAuthenticated()` tjekker at det gemte
+  scope dækker alle nuværende `SCOPES` — mangler noget (typisk fordi
+  tokenet er fra før dette scope blev tilføjet), ryddes tokenet og
+  brugeren sendes automatisk tilbage til login-skærmen. Et token kan ikke
+  opgraderes til nye scopes via refresh, kun via et nyt samtykke, så dette
+  er den eneste korrekte vej for eksisterende brugere.
+- `refreshAccessToken()` bevarer det oprindelige scope hvis Spotifys
+  refresh-svar undlader `scope`-feltet.
+- Verificeret med en midlertidig Playwright-harness: (a) et gemt token
+  uden `user-top-read` fører til login-skærmen og bliver ryddet fra
+  localStorage; (b) et token MED scopet, kombineret med et virkende
+  Spotify- og Last.fm-svar, viser i Debug-panelet at `getTopArtists()`
+  returnerer data, `buildUserProfile()` får `seedArtistNames`,
+  `LastFmRecommendationProvider` bliver kaldt og bygger anbefalinger, og
+  kilden er `Last.fm`, ikke `Mock`. 8/8 checks bestod. Scriptet er
+  fjernet igen efter verifikation.
+- README opdateret (OAuth-flow-afsnittet) til at beskrive scope-tjekket
+  og hvorfor `user-top-read` er nødvendigt.
+- Ingen andre ændringer — ingen nye features, ingen UI-ændringer.
+
 ## Debug-panel: diagnosticér recommendation-flowet på 10 sekunder
 
 Rent diagnostik-værktøj, kun til udvikling — ingen ny produktfunktionalitet.

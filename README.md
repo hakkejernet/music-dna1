@@ -188,10 +188,20 @@ Client Secret, som aldrig må ligge i en SPA):
    `localStorage`.
 4. `getValidAccessToken()` refresher automatisk access-tokenet når det
    er ved at udløbe.
+5. `isAuthenticated()` tjekker desuden at det gemte token faktisk har alle
+   scopes appen kræver lige nu (gemt sammen med tokenet ved login). Mangler
+   ét — typisk fordi tokenet er fra før et scope blev tilføjet, som
+   `user-top-read` blev — kan det **ikke** opgraderes via refresh (Spotify
+   giver kun nye scopes via et nyt samtykke), så tokenet ryddes og brugeren
+   sendes automatisk tilbage til login-skærmen for at godkende igen.
 
 Scopes: kun læse-adgang (`playlist-read-private`,
-`playlist-read-collaborative`, `user-read-private`, `user-read-email`) —
-værktøjet skriver aldrig til din Spotify-konto.
+`playlist-read-collaborative`, `user-read-private`, `user-read-email`,
+`user-top-read`) — værktøjet skriver aldrig til din Spotify-konto.
+`user-top-read` bruges af `getTopArtists()`, som
+`LastFmRecommendationProvider` er afhængig af for at kunne udlede seeds —
+uden det scope 403'er kaldet, og appen falder tilbage til mock-data (se
+CHANGELOG.md).
 
 ## Scripts
 

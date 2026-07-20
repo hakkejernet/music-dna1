@@ -10,24 +10,43 @@ const VERIFIER_KEY = 'music-dna:pkce-verifier';
 const STATE_KEY = 'music-dna:oauth-state';
 
 // Read-only scopes only: this is a discovery tool, never writes to the user's Spotify account.
+// user-top-read is required for getTopArtists() (/me/top/artists) — without it
+// Spotify 403s that call, buildUserProfile() silently ends up with empty
+// seedArtistNames, and LastFmRecommendationProvider never even calls Last.fm
+// (see its own seedNames.length === 0 early return). A token issued before
+// this scope existed can't gain it via refresh — only a fresh authorize with
+// a new consent screen grants it, hence isAuthenticated()'s scope check below.
 const SCOPES = [
   'playlist-read-private',
   'playlist-read-collaborative',
   'user-read-private',
   'user-read-email',
+  'user-top-read',
 ];
 
 interface TokenResponse {
   access_token: string;
   refresh_token?: string;
   expires_in: number;
+  scope?: string;
 }
 
-const toTokens = (response: TokenResponse, fallbackRefreshToken?: string): SpotifyTokens => ({
+const toTokens = (
+  response: TokenResponse,
+  fallbackRefreshToken?: string,
+  fallbackScope?: string,
+): SpotifyTokens => ({
   accessToken: response.access_token,
   refreshToken: response.refresh_token ?? fallbackRefreshToken ?? '',
   expiresAt: Date.now() + response.expires_in * 1000,
+  scope: response.scope ?? fallbackScope ?? '',
 });
+
+/** True only if every scope in SCOPES is present on the token's granted scope string. */
+const hasRequiredScopes = (grantedScope: string | undefined): boolean => {
+  const granted = new Set((grantedScope ?? '').split(' ').filter(Boolean));
+  return SCOPES.every((scope) => granted.has(scope));
+};
 
 export const buildAuthorizeUrl = async (): Promise<string> => {
   const verifier = generateCodeVerifier();
@@ -94,10 +113,10 @@ export const handleAuthCallback = async (url: URL): Promise<void> => {
   saveTokens(toTokens(data));
 };
 
-const refreshAccessToken = async (refreshToken: string): Promise<SpotifyTokens> => {
+const refreshAccessToken = async (previousTokens: SpotifyTokens): Promise<SpotifyTokens> => {
   const body = new URLSearchParams({
     grant_type: 'refresh_token',
-    refresh_token: refreshToken,
+    refresh_token: previousTokens.refreshToken,
     client_id: env.spotifyClientId,
   });
 
@@ -112,7 +131,10 @@ const refreshAccessToken = async (refreshToken: string): Promise<SpotifyTokens> 
   }
 
   const data = (await response.json()) as TokenResponse;
-  const tokens = toTokens(data, refreshToken);
+  // Spotify's refresh grant doesn't let you gain new scopes — a refreshed
+  // token always carries what was originally authorized, so preserve the
+  // prior token's scope if the refresh response omits it.
+  const tokens = toTokens(data, previousTokens.refreshToken, previousTokens.scope);
   saveTokens(tokens);
   return tokens;
 };
@@ -128,7 +150,7 @@ export const getValidAccessToken = async (): Promise<string | null> => {
   }
 
   try {
-    const refreshed = await refreshAccessToken(tokens.refreshToken);
+    const refreshed = await refreshAccessToken(tokens);
     return refreshed.accessToken;
   } catch {
     clearTokens();
@@ -136,6 +158,24 @@ export const getValidAccessToken = async (): Promise<string | null> => {
   }
 };
 
-export const isAuthenticated = (): boolean => loadTokens() !== null;
+/**
+ * A token that predates a SCOPES change (or was granted before the user
+ * approved everything now required) can't gain the missing scope through a
+ * refresh — only a fresh authorize with a new consent screen does. So an
+ * existing, unexpired token with insufficient scope is treated as "not
+ * logged in": it's cleared here, which sends the user back to LoginScreen
+ * instead of silently running with a permission it doesn't have.
+ */
+export const isAuthenticated = (): boolean => {
+  const tokens = loadTokens();
+  if (!tokens) return false;
+
+  if (!hasRequiredScopes(tokens.scope)) {
+    clearTokens();
+    return false;
+  }
+
+  return true;
+};
 
 export const logout = (): void => clearTokens();

@@ -2,6 +2,8 @@ export interface SpotifyTokens {
   accessToken: string;
   refreshToken: string;
   expiresAt: number;
+  /** Space-separated scopes Spotify actually granted — used to detect tokens issued before a scope was added to SCOPES. */
+  scope: string;
 }
 
 export interface SpotifyImage {
