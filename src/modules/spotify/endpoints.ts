@@ -71,7 +71,10 @@ interface RawArtist {
   name: string;
   genres: string[];
   popularity: number;
-  followers: { total: number };
+  // Optional: Spotify's documented schema always includes this, but a live
+  // response has been observed without it — treat it as absent rather than
+  // crash the whole seed-building pipeline over one artist's follower count.
+  followers?: { total: number };
   images: RawImage[];
 }
 
@@ -83,7 +86,7 @@ const mapArtist = (artist: RawArtist): SpotifyArtist => ({
   name: artist.name,
   genres: artist.genres,
   popularity: artist.popularity,
-  followers: artist.followers.total,
+  followers: artist.followers?.total ?? 0,
   images: mapImages(artist.images),
 });
 

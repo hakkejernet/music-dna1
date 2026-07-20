@@ -1,5 +1,28 @@
 # Changelog
 
+## Første konkrete runtime-fejl fanget via Debug-panelet, rettet
+
+Debug-panelet (netop bygget for at kunne se dette uden konsol) viste:
+`undefined is not an object (evaluating 'e.followers.total')`.
+
+- **Fil**: `src/modules/spotify/endpoints.ts:86`, i `mapArtist()`, kaldt fra
+  `getTopArtists()` (`/me/top/artists`) — præcis det kald
+  `buildSpotifySeed()` afhænger af, hvilket matcher symptomerne
+  (Top artists fundet = -, seedArtistNames = -, Last.fm aldrig kaldt,
+  Kilde = Mock, Fallback = "Ingen Spotify top artists").
+- **Årsag**: `RawArtist.followers` var typet non-optional
+  (`{ total: number }`), men et konkret Spotify-svar manglede feltet
+  helt på mindst ét kunstner-objekt — koden antog blindt at Spotifys
+  dokumenterede skema altid holder.
+- **Rettelse (kun denne fejl)**: `followers` er nu optional på
+  `RawArtist`, og `mapArtist()` læser `artist.followers?.total ?? 0` i
+  stedet for `artist.followers.total`. Ingen andre filer, ingen andre
+  ændringer.
+- Verificeret: mock et `/me/top/artists`-svar med én kunstner uden
+  `followers`-felt (reproducerer fejlen 1:1) — ingen uncaught error,
+  Top artists fundet og seedArtistNames udfyldes korrekt for begge
+  kunstnere. 4/4 checks bestod.
+
 ## Debug-panel virker nu i production (iPhone-venligt)
 
 Debug-panelet var bundet til `import.meta.env.DEV`, så det var usynligt på
