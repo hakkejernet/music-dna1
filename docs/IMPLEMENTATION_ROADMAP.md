@@ -1669,24 +1669,42 @@ en fremtidig opgave denne milestone bevidst ikke rørte (Rule 4).
 
 ---
 
-## M10 — Observability og kalibreringsmåling
+## M10 — Application Layer
 
-**Type:** Teknisk evne, med direkte produktbeslutnings-værdi.
+**Scope-note (afløser oprindelig beskrivelse nedenfor — samme type
+divergens som M9's):** da M10 skulle påbegyndes, satte brugeren scopet
+til Application Layer — Application Services/Use Cases der
+orkestrerer repositories og Learning Engine. Dette er et **helt andet
+emne** end det oprindelige roadmaps M10 ("Observability og
+kalibreringsmåling", PRD-metrics + TDS afsnit 8's kalibrerings-buckets).
+Den oprindelige M10 er derfor **ikke udført** og forbliver en åben,
+uplanlagt opgave, ligesom den oprindelige M9 ("Fejlhåndtering"). Ti
+bindende regler for det faktiske M10 (Application Services koordinerer
+repositories/Learning Engine/domænemodeller uden selv at indeholde
+domænelogik, ejer "workflows"/use cases — ikke UI-handlere, Learning
+Engine forbliver uændret og kun kaldt, repositories injiceres — ingen
+globale instanser/singleton/service locator, fuldt testbare via
+interfaces, ingen hardcodede persistence-implementeringer, ingen
+mutation af domæneobjekter, kun kontrakter — ikke konkrete
+repositories, ingen fejlhåndtering udover simpel propagation, ingen
+events/message bus/observer) styrede det faktiske arbejde.
 
-**Formål:** Implementere kernemetrics fra PRD (Save Rate, Negative
+**Type (oprindeligt):** Teknisk evne, med direkte produktbeslutnings-værdi.
+
+**Formål (oprindeligt):** Implementere kernemetrics fra PRD (Save Rate, Negative
 Feedback Rate, m.fl.) og kalibrerings-bucket-målingen fra TDS afsnit 8.
 
 **Afhængigheder:** M8 (feedback+DNA-opdatering skal generere data at
 måle på), M5 (scores at kalibrere mod).
 
-**Omfang:**
+**Omfang (oprindeligt, ikke udført):**
 - Aggregering af de PRD-definerede metrics fra `FeedbackEvent`-loggen.
 - Kalibrerings-buckets (0-20/20-40/.../80-100 forudsagt score → faktisk
   gem-rate).
 - En simpel, inspicérbar visning af disse tal (ikke nødvendigvis et
   poleret dashboard — det er et internt værktøj i denne fase).
 
-**Acceptkriterier:**
+**Acceptkriterier (oprindeligt, ikke udført):**
 - Save Rate, Negative Feedback Rate og de øvrige PRD-metrics kan
   beregnes korrekt fra en fast mængde testdata med kendt forventet
   resultat.
@@ -1702,6 +1720,134 @@ datasæt → håndberegnede forventede aggregater.
 testbrugere) et meningsfuldt billede, eller er datamængden for lav til
 at sige noget endnu — og hvis sidste, hvad er den mindste datamængde
 der ville gøre det meningsfuldt?
+
+**Status:** ikke udført. Se scope-noten øverst i denne sektion — den
+faktiske M10 blev Application Layer. Observability/kalibrering er en
+åben, uplanlagt opgave, ligesom M9's fejlhåndtering.
+
+### Review Report — M10 (Application Layer, det faktiske scope)
+
+**Hvad blev bygget?**
+`src/modules/applicationLayer/useCases/`:
+- `loadUserDna.ts` / `saveUserDna.ts` / `persistLearningEvent.ts` — tre
+  tynde Application Services, hver konstrueret med præcis den
+  repository-*kontrakt* (fra `persistence`s typer, ikke dens klasser)
+  den har brug for, og hver med en enkelt `execute()`-metode der
+  delegerer direkte til repositoryet — ingen logik udover selve kaldet.
+- `learnFromReaction.ts` — `LearnFromReaction`: den egentlige
+  orkestrator. Konstrueret med `UserDnaRepository`,
+  `TrackDnaRepository`, `LearningEventRepository`, og en
+  `LearningStrategy[]` — alle fire som konstruktør-injicerede
+  interfaces/data, aldrig en konkret klasse. `execute(userId,
+  learningEvent)`: henter `UserDNA` og `TrackDNA`, kalder `learn()` fra
+  M8 **uændret og uflyttet** (Rule 3), gemmer den opdaterede `UserDNA`
+  og selve `LearningEvent`.
+- Alle klasser bruger eksplicit felt-tildeling i konstruktøren
+  (`this.x = x`), ikke TypeScripts parameter-property-genvej — samme
+  årsag som i M3: `erasableSyntaxOnly` afviser den syntaks i dette
+  projekt.
+- Tests: `loadUserDna.test.ts`, `saveUserDna.test.ts`,
+  `persistLearningEvent.test.ts`, `learnFromReaction.test.ts` — 18 nye
+  tests i alt.
+
+**Design-afklaringer, gjort eksplicit (ingen ADR nødvendig — intet fra
+M1-M9 er ændret):**
+- **Klasser, ikke funktioner:** i modsætning til M8's `learn()` (en
+  almindelig funktion, fordi M8 Rule 2 var ekstremt skarpt formuleret
+  om "ingen intern tilstand") bruger M10 klasser med
+  konstruktør-injicerede afhængigheder. Dette er selve definitionen af
+  dependency injection (Rule 4/5's egen sprogbrug: "repositories
+  injiceres", "konstrueres via interfaces") — en gemt, injiceret
+  repository-reference er ikke "global tilstand", "singleton", eller
+  en "service locator"; det er *modsætningen* til alle tre (en
+  service locator opslår sine afhængigheder selv, injektion får dem
+  udefra, hvilket er præcis hvad disse klassers konstruktører gør).
+- **`LearnFromReaction` kalder ikke `feedbackPipeline`:** Rule 1 lister
+  præcis tre ting en Application Service må koordinere (Repositories,
+  Learning Engine, Domain Models) — `feedbackPipeline` (M7) er ikke på
+  listen. `LearnFromReaction.execute()` forudsætter derfor en allerede
+  valideret `LearningEvent` som parameter; at kalde
+  `processReactionEvent()` for at *skabe* den er en fremtidig kaldsteds-
+  opgave, ikke denne workflows.
+- **Kaster ved manglende `UserDNA`:** hvis intet `UserDNA` findes for
+  den givne `userId`, kaster `execute()` en klar fejl med det samme.
+  Rule 9 forbyder fejlhåndtering udover "simpel propagation" — en
+  umiddelbar, ikke-fanget `throw` med en præcis besked *er* simpel
+  propagation, ikke et forsøg på retry/fallback/logging. Alternativet
+  (lade et nativt `TypeError` opstå af sig selv, da `learn()` ville
+  læse `.signals` på `null`) ville også være "simpel propagation", men
+  en klar fejlbesked er strengt bedre uden at tilføje nogen håndtering.
+  Manglende `TrackDNA` derimod kræver ingen særbehandling — `null`
+  gives direkte videre til `learn()`, som M8 Rule 7 allerede dækker.
+- **`strategies` er et obligatorisk konstruktør-argument, uden
+  standardværdi:** for at holde `LearnFromReaction` fuldt testbar (Rule
+  5) og undgå en implicit, skjult afhængighed af
+  `DEFAULT_LEARNING_STRATEGIES` — enhver test eller fremtidig kalder
+  skal selv vælge hvilke strategier der bruges, aldrig få dem "gratis"
+  fra et modul-niveau default.
+
+**Hvilke tests blev kørt?**
+`npm run test` → 169/169 grønne (151 fra M1-M9 + 18 nye). `npx tsc -b`,
+`npm run lint`, `npm run build` alle grønne og uændrede for al
+eksisterende kode.
+
+**Bevis for dependency injection:** hver af de fire services tager sin
+eneste afhængighed (eller afhængigheder) som konstruktør-argumenter;
+håndrullede "fake"-repositories (uafhængige af `persistence`s egne
+klasser) injiceres i flere tests og fungerer identisk med de rigtige
+`InMemory*`-implementationer.
+
+**Bevis for ingen domænelogik i Application Layer:** et test
+sammenligner `LearnFromReaction`s output direkte med resultatet af at
+kalde `learningEngine.learn()` selv, med samme input — de er
+`toEqual`-identiske, hvilket beviser workflowet ikke tilføjer, fjerner,
+eller omtolker noget. Et andet test injicerer en helt
+brugerdefineret strategi (`FixedResult`) og viser resultatet går
+igennem uændret — der er intet hardcodet signal-kendskab i
+`LearnFromReaction` selv.
+
+**Bevis for at Learning Engine er uændret:** `git diff` mod
+M9's commit for `src/modules/learningEngine/` viser ingen ændringer.
+
+**Bevis for at repositories kan udskiftes:** hver af de fire services'
+tests køres både med en håndrullet fake og med den rigtige
+`InMemory*`-implementation fra M9, med identisk resultat.
+
+**Bevis for at workflows fungerer end-to-end med InMemoryRepository:**
+et dedikeret test kører hele `LearnFromReaction`-flowet
+(load → learn → save) mod tre rigtige `InMemory*`-repositories,
+verificerer at den gemte `UserDNA` faktisk er opdateret, og at
+`LearningEvent`et er persisteret.
+
+**Er milestone 100% færdig ifølge Definition of Done?**
+1. Acceptkriterier (de nye, brugerdefinerede regler) opfyldt — ja, se
+   bevisafsnittene ovenfor. 2. Tests består — ja, 169/169. 3. Ingen
+   TODO/placeholder — ja. 4. Dokumentation opdateret — ja, denne Review
+   Report plus inline-kommentarer i koden. 5. Fungerer isoleret uden
+   fremtidige milestones — ja, intet import af React, UI, browser-API,
+   IndexedDB, eller Spotify noget sted i `applicationLayer/`; kun
+   type-imports fra `persistence` (kontrakter), `feedbackPipeline`
+   (`LearningEvent`), `learningEngine` (`learn`, `LearningStrategy`,
+   `DEFAULT_LEARNING_STRATEGIES`), og `userDna` (`UserDNA`). 6. Ingen
+   kendte kritiske fejl — ja. 7. Reviewet mod PRD/TDS/ADR — ja:
+   design-afklaringerne ovenfor er afgrænsninger, ikke ændringer, af
+   tidligere milestones; ADR-16 til ADR-23 er alle respekteret (intet
+   fra M1-M9 er ændret — `learningEngine/` og `persistence/`s filer er
+   bit-for-bit identiske med før denne milestone). 8. Demonstrerer den
+   tilsigtede værdi — ja: beviset er ikke om domænemodulerne "gør
+   noget nyt", men at de nu kan samarbejde (repositories + Learning
+   Engine, koordineret af en Application Service) uden at kende
+   hinanden direkte.
+
+**Ja — M10 er 100% færdig ifølge Definition of Done (for det scope
+brugeren faktisk satte).**
+
+**Er projektet klar til næste milestone?**
+Ja, med to åbne punkter at være bevidst om: (a) de oprindelige M9
+("Fejlhåndtering") og M10 ("Observability/kalibrering") er stadig ikke
+bygget, og (b) `LearnFromReaction` forudsætter allerede-valideret
+input — at kæde `feedbackPipeline` ind foran den er en fremtidig
+sammensætningsopgave.
 
 ---
 

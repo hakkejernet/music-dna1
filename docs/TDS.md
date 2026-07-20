@@ -1095,6 +1095,68 @@ kan derfor ikke i dag besvare "alle hændelser for denne bruger", kun
 Review Report som en fremtidig opgave (kræver en ADR mod M7, jf.
 ADR-16, når/hvis den besluttes) — bevidst ikke løst her.
 
+### ADR-24 — Application Services beskriver workflows; domænelogik forbliver i domænet
+
+- **Beslutning:** En Application Service (M10's "Use Case", fx
+  `LearnFromReaction`) beskriver kun *rækkefølgen* af trin i en
+  arbejdsgang — hent, kald, gem. Enhver regel om *hvad et signal betyder*,
+  *hvordan et signal skal opdateres*, eller *hvornår noget er gyldigt*
+  bor i det domænemodul der allerede ejer det (`learningEngine` for
+  DNA-opdatering, `feedbackPipeline` for validering, `trackDna` for
+  skemaet) — aldrig i Application-laget selv.
+- **Baggrund:** M10 gjorde Application Services til det første lag der
+  faktisk *kalder* flere domænemoduler sammen (`persistence` +
+  `learningEngine`). Uden denne ADR ville det være en naturlig, men
+  forkert, genvej at lade en Application Service selv indeholde en lille
+  regel "for at spare en ekstra kalder" (fx en særlig håndtering af én
+  reaktionstype, direkte i `LearnFromReaction`) — det ville sprede
+  domænekundskab ud over to lag i stedet for ét.
+- **Alternativer overvejet:** (a) lad Application Services indeholde
+  simple, "ikke-værd-at-flytte"-domæneregler direkte, og reservere
+  domænemodulerne til de mere komplekse tilfælde; (b) lad Application
+  Services validere forretningsregler før de kalder domænet, som en
+  "hurtig kontrol".
+- **Hvorfor denne løsning:** Begge alternativer gør det umuligt at vide
+  *hvor* en given regel om systemets adfærd findes uden at læse
+  Application-laget også — det underminerer selve pointen med at have
+  navngivne, ejerskabsklare domænemoduler (ADR-08, ADR-20). En
+  Application Service der udelukkende orkestrerer kan testes ved at
+  bevise dens output er identisk med et direkte kald til domænet (jf.
+  M10's Review Report) — det beviset er umuligt hvis Application-laget
+  selv har tilføjet eller ændret noget undervejs.
+- **Konsekvenser:** Enhver ny forretningsregel tilføjes til det
+  ejende domænemodul, aldrig til en Application Service. Application
+  Services kan omskrives, omarrangeres, eller udskiftes helt uden at
+  nogen regel om hvad systemet *gør* ændrer sig.
+
+### ADR-25 — Application Layer konstruerer aldrig sine egne afhængigheder
+
+- **Beslutning:** Ingen klasse i `applicationLayer` må selv skabe en
+  konkret repository-, strategi-, eller anden domæneafhængighed. Alt
+  leveres udefra, gennem interfaces, ved konstruktion.
+- **Baggrund:** M10 Rule 4/6/8 forbyder globale instanser, singletons,
+  service locators, og hardcodede persistence-implementeringer.
+  Uden en navngivet ADR ville en fremtidig, velmenende bekvemmeligheds-
+  ændring (fx "lad `LearnFromReaction` selv oprette en
+  `InMemoryUserDnaRepository`, hvis ingen gives" som en default-værdi)
+  kunne glide ind som en lille bekvemmelighed, uden at nogen opdager at
+  det underminerer hele lagets testbarhed og udskiftelighed.
+- **Alternativer overvejet:** (a) tillad et default-konstruktørargument
+  der falder tilbage til en konkret in-memory-implementation, for
+  nemmere brug uden explicit wiring; (b) et centralt "composition
+  root"/service locator-modul som Application Services selv slår op i.
+- **Hvorfor denne løsning:** Begge alternativer genindfører præcis den
+  skjulte kobling M10 Rule 4 udelukker ved navn ("ingen service
+  locator") — et default eller en central opslagstjeneste er blot en
+  service locator i forklædning, og gør det umuligt at bevise
+  udskiftelighed uden at først fjerne defaulten. At kræve alt leveret
+  eksplicit er hvad der gjorde M10's egne beviser (fake vs. rigtig
+  repository, identisk resultat) mulige at skrive i første omgang.
+- **Konsekvenser:** Enhver, der bruger en Application Service — i dag
+  tests, i fremtiden et rigtigt composition-root/wiring-lag, endnu ikke
+  bygget — er ansvarlig for selv at konstruere og injicere alle
+  afhængigheder. Der findes ingen "nem" genvej, kun den eksplicitte vej.
+
 ---
 
 ## 11. Non-functional Requirements (NFR)
