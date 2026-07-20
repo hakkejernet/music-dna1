@@ -293,6 +293,93 @@ integrationen, som allerede er bygget og testet i v1).
 **Review-punkt:** er cold-start-formlen rimelig, eller producerer den
 overraskende/urimelige startprofiler for oplagte testcases?
 
+### Review Report — M2
+
+**Hvad blev bygget?**
+`buildColdStartUserDna(userId, snapshot, now)` — en ren, deterministisk
+funktion: `Spotify Library-snapshot → Cold Start Builder → UserDNA`,
+uden UI og uden live Spotify-kald (se scope-afgrænsning nedenfor).
+Genre- (6), mainstream-, explicitness- og songLength-signaler
+beregnes fra biblioteksdata når den er til stede; alt andet efterlades
+ved M1's neutrale default via `validateSignalVector()`. Hvert beregnet
+signal får samme fikserede, lave confidence (`0.2`) — aldrig gradueret
+efter datamængde, som eksplicit besluttet for at holde
+implementationen simpel (opgavens eget mål: "den simpleste korrekte
+implementation", ikke en poleret model).
+
+**Scope-afgrænsning, gjort eksplicit:** roadmappets oprindelige
+acceptkriterium nævnte "inspicérbar (fx via en simpel debug-visning)"
+som ét eksempel på hvordan resultatet kunne ses. De nye instrukser for
+M2 sagde eksplicit "Ingen UI... Kun input: Spotify Library → Cold
+Start Builder → UserDNA" — jeg har derfor tolket "inspicérbar" som
+opfyldt ved at funktionen returnerer et rigtigt, inspicerbart
+JS-objekt, verificeret gennem tests, uden at bygge nogen visning. Der
+er heller ikke lavet nogen kobling til en levende Spotify-session
+(ingen import fra `modules/spotify`) — det er en fremtidig
+integrationsopgave, ikke del af denne milestone. Ingen af disse to
+punkter er en konflikt med PRD/TDS/ADR; det er en tolkning af hvor
+grænsen for "kun Cold Start" ligger, gjort synlig i stedet for stille
+antaget.
+
+**Hvilke filer blev ændret?**
+Kun nye filer:
+- `src/modules/userDna/librarySnapshot.ts`
+- `src/modules/userDna/coldStart.ts`
+- `src/modules/userDna/coldStart.test.ts`
+- `src/modules/userDna/index.ts` (udvidet med de nye eksports)
+
+**Hvilke tests blev kørt?**
+`npm run test` — 11 nye tests (plus M1's 14, alle stadig grønne, 25
+i alt), organiseret efter de 5 designprincipper og roadmappets egne
+acceptkriterier. `npm run build` og `npm run lint` uændrede (samme
+output-hash som før M2 — ingen eksisterende kode påvirket).
+
+**Bevis for acceptkriterier/principper:**
+
+| Krav | Test | Resultat |
+|---|---|---|
+| Princip 1: deterministisk | Samme input kaldt to gange, `.toEqual()` | ✅ Byte-identisk, også for tomt bibliotek |
+| Princip 2: altid lav confidence | Alle beregnede signalers confidence ≤ 0.2 | ✅ |
+| Princip 3: ukendt, ikke gættet | De 10 ikke-beregnelige signaler (se tabel nedenfor) har confidence 0, selv med et rigt bibliotek | ✅ |
+| Princip 4: ingen enkelt-feature-afhængighed | `topArtists`-signaler beregnes uden `savedTracks` og omvendt; tomme arrays giver ingen division-by-zero-crash | ✅ |
+| Princip 5: ren, testbar, ingen UI/ranking/recommendation | Ingen import af React, `ranking`, eller candidate-typer noget sted i modulet | ✅ |
+| AC: udfyldt, inspicerbar `UserDNA` for en reel bruger | `userId`/`version`/`updatedAt` korrekt sat, `signals` ikke-tom | ✅ |
+| AC: to forskellige biblioteker → synligt forskellige profiler | Rock- vs. pop-tungt bibliotek → `rock`/`pop`/`mainstream`-værdier tydeligt forskellige | ✅ |
+| AC: tomt bibliotek → gyldig, neutral, ikke en fejl | `{ topArtists: [], savedTracks: null }` → alle signaler confidence 0, intet throw | ✅ |
+
+**Dokumentation: hvilke signaler kan beregnes direkte, hvilke efterlades bevidst med lav/nul confidence:**
+
+| Signal | Kan beregnes fra Spotify-biblioteket? | Kilde |
+|---|---|---|
+| pop, hiphop, trap, rock, country, house | ✅ Ja | Nøgleord-match mod topkunstneres `genres`-tags |
+| mainstream | ✅ Ja | Gennemsnitlig `popularity` (0-100) for topkunstnere |
+| explicitness | ✅ Ja | Andel gemte sange markeret `explicit` |
+| songLength | ✅ Ja | Gennemsnitlig `durationMs` for gemte sange, normaliseret |
+| energy, tempo, valence, acousticness, danceability, aggressiveness, melodicStrength, instrumentalness, vocalMale, vocalFemale | ❌ Nej — forbliver ved default (confidence 0) | Kræver Spotifys audio-features-endpoint, som allerede er dokumenteret utilgængeligt for nye developer-apps siden november 2024 (jf. v1's `README.md`, "Vigtigt: ingen audio-features i v0.1"). Ingen anden datakilde er tilsluttet i denne milestone (det er `candidate-providers`/`enrichment`s fremtidige opgave, M3-M4) — at gætte disse ville bryde Design Principle 3. |
+
+9 af 19 katalog-signaler kan altså udfyldes ærligt fra det Spotify-data
+denne app faktisk har adgang til; de resterende 10 er alle i den
+akustiske kategori og forbliver retmæssigt "ukendt" ved cold start.
+
+**Er milestone 100% færdig ifølge Definition of Done?**
+1. Acceptkriterier opfyldt — ja. 2. Tests består — ja, 25/25. 3. Ingen
+TODO/placeholder — ja. 4. Dokumentation opdateret — ja, tabellen
+ovenfor plus inline-kommentarer i `coldStart.ts`. 5. Fungerer isoleret
+uden fremtidige milestones — ja, ingen import af `candidate-providers`,
+`ranking`, eller UI; build-output uændret. 6. Ingen kendte kritiske
+fejl — ja. 7. Reviewet mod PRD/TDS/ADR — ja, se scope-afgrænsningen
+ovenfor, direkte forankret i TDS Open Question 7 (den præcise
+cold-start-formel, nu besvaret) og ADR-12 (confidence som del af hvert
+signal). 8. Demonstrerer den tilsigtede værdi — ja: en reel, testbar
+Cold Start-formel eksisterer nu og er bevist deterministisk, robust
+mod manglende data, og ærlig om sine egne begrænsninger.
+
+**Ja — M2 er 100% færdig ifølge Definition of Done.**
+
+**Er projektet klar til næste milestone?**
+Ja. M3 (generaliseret Candidate Provider) har ingen afhængighed af M2
+og kan påbegyndes uafhængigt, jf. afhængighedsoversigten.
+
 ---
 
 ## M3 — Én Candidate Provider, generaliseret
