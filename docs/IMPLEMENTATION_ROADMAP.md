@@ -937,12 +937,28 @@ Ja. M6 (Queue + Discovery koblet til det nye flow) kan nu bygges på et
 
 ---
 
-## M6 — Queue + Discovery koblet til det nye flow
+## M6 — Recommendation Queue / Orchestration
 
-**Type:** Brugervendt værdi — **det første milestone en almindelig
-bruger reelt oplever.**
+**Scope-note (afløser oprindelig beskrivelse nedenfor, samme mønster som
+M3/M4/M5):** da M6 skulle påbegyndes, indskærpede brugeren scopet
+eksplicit til KUN Recommendation Queue/Orchestration — ikke Discovery-UI,
+ikke en databinding til v1's eksisterende komponenter. Ni bindende
+regler (køen ejer kun rækkefølgen, kender kun `RankedCandidate`, er
+deterministisk, beregner ingen scorer, registrerer aldrig feedback —
+kun returnerer hændelser, navigation uden sideeffekter, tom queue er
+normal, immutability, intet UI/React/persistence/netværk) styrede det
+faktiske arbejde. Rule 8 (immutability: handlinger returnerer en ny
+queue-state) er direkte uforenelig med v1's `RecommendationQueue`, som
+er en muterbar klasse (`this.cursor`, `this.items` opdateres in-place) —
+se TDS-afklaringen i Review Report'en for hvorfor TDS' egen antagelse om
+direkte genbrug ikke kunne overholdes. Den oprindelige
+"Formål/Omfang/Acceptkriterier" nedenfor er bevaret som historik, men
+**erstattet** af det faktisk udførte arbejde.
 
-**Formål:** Bytte v1's `RecommendationQueue`/`DiscoveryPage`s
+**Type (oprindeligt):** Brugervendt værdi — det første milestone en
+almindelig bruger reelt oplever.
+
+**Formål (oprindeligt):** Bytte v1's `RecommendationQueue`/`DiscoveryPage`s
 datakilde fra det gamle `Recommendation`-typehierarki til
 `RankedCandidate` fra M5, uden at ændre selve kø-/UI-logikken (den er
 allerede korrekt bygget og fejlrettet, jf. TDS Migration "genbruges
@@ -950,14 +966,14 @@ direkte").
 
 **Afhængigheder:** M5.
 
-**Omfang:**
+**Omfang (oprindeligt):**
 - `queue` og `discovery` forbruger `RankedCandidate` i stedet for
   `RankedRecommendation`.
 - "Hvorfor denne?"-panelet viser de nye DNA-baserede forklaringer.
 - Ingen ændring af selve kø-adfærden (ikke-cyklisk, én ad gangen —
   allerede korrekt).
 
-**Acceptkriterier:**
+**Acceptkriterier (oprindeligt):**
 - En rigtig bruger logger ind og ser en sang, rangeret af det nye
   system, i den eksisterende Discovery-UI.
 - "Næste" bevæger sig korrekt gennem køen uden at wrappe (allerede
@@ -971,6 +987,122 @@ UI-adfærd uden en levende ekstern afhængighed.
 
 **Review-punkt:** føles oplevelsen identisk med v1's Discovery-UX (den
 skal ikke ændre sig — kun *hvad* der vises, ikke *hvordan*)?
+
+### Review Report — M6
+
+**Hvad blev bygget?**
+`src/modules/queue/` (ny mappe, samme navngivnings-situation som M5 —
+se afklaring nedenfor):
+- `types.ts` — `ReactionType` (`'save' | 'reject' | 'known'`),
+  `QueueReactionEvent` (`candidateRef`, `trackDnaRef`, `reactionType`) —
+  queue's egen, lokale hændelses-vokabular, ikke importeret fra noget
+  `feedback`-modul (som ikke findes endnu).
+- `recommendationQueue.ts` — `RecommendationQueue`: et immutabelt
+  value-objekt over en allerede-rangeret `RankedCandidate[]`.
+  `static create()` tager sin egen frosne kopi af den givne sekvens
+  (`Object.freeze([...rankedCandidates])`) — queue'ens snapshot kan ikke
+  ændres af noget kalderen gør med sit eget array bagefter.
+  `current()`/`peek()`/`remaining()` er rene forespørgsler; `next()` og
+  `react()` returnerer en ny `RecommendationQueue`-instans, aldrig en
+  muteret `this`. `react()` returnerer *kun* en `QueueReactionEvent`
+  (eller `null` hvis køen er tom) plus den nye state — ingen persistering,
+  intet kald til `userDna` eller noget andet modul.
+- `recommendationQueue.test.ts` — 18 nye tests.
+
+**TDS-afklaring, gjort eksplicit (ikke en konflikt, ingen ADR
+nødvendig):** TDS §2's `queue`-beskrivelse og roadmappets oprindelige
+M6-tekst begge antog at v1's `RecommendationQueue`
+(`src/modules/recommendations/recommendationQueue.ts`) kunne genbruges
+direkte, siden dens ikke-cykliske adfærd allerede var korrekt og
+fejlrettet. M6's Rule 8 (immutability: handlinger returnerer en ny
+queue-state) gør den antagelse uholdbar — v1's klasse er bevidst
+muterbar (`this.cursor += 1` in-place, jf. dens egen fejlrettelse
+tidligere i denne session). Der er derfor bygget en ny, immutabel klasse
+i et nyt modul (`src/modules/queue/`), som **gentager** v1's
+ikke-cykliske løsning (cursor capped ved `items.length`, aldrig
+wrappet) i den nye, immutable form — samme adfærd, ny mekanisme. v1's
+`modules/recommendations/recommendationQueue.ts` er **urørt** — dette er
+ikke en ændring af en tidligere milestone (ADR-16 er derfor ikke
+relevant her: intet fra M1-M5 er ændret, kun tilføjet noget nyt parallelt
+til v1's egen, stadig urørte kode).
+
+**Navngivnings-note:** samme mønster som M5's `rankingEngine/` vs. v1's
+`ranking/` — den nye, TDS-definerede `queue`-komponent hedder
+`src/modules/queue/` for at undgå kollision med v1's
+`modules/recommendations/recommendationQueue.ts`, som forbliver
+uændret og ubrugt af denne milestone.
+
+**Andre scope-beslutninger, gjort eksplicit:**
+- Ingen Discovery-UI, ingen React, ingen binding til `DiscoveryPage` —
+  Rule 9 forbyder det eksplicit. Det oprindelige roadmap-formål ("en
+  rigtig bruger logger ind og ser en sang... i den eksisterende
+  Discovery-UI") er derfor ikke opfyldt i denne milestone — det er nu
+  en fremtidig UI-koblingsopgave, ikke del af selve Queue-arkitekturen.
+- `react()` fremmer altid til næste kandidat efter en reaktion (samme
+  `next()`-state), fordi TDS §2 selv siger queue aldrig må "genbruge en
+  allerede afgjort sang" — en kandidat der er reageret på er afgjort.
+- `peek()` har ingen parameter (viser kun ét skridt frem) — den mest
+  bogstavelige læsning af Rule 6's liste, ingen ekstra funktionalitet
+  tilføjet ud over det navngivne.
+
+**Hvilke tests blev kørt?**
+`npm run test` → 82/82 grønne (64 fra M1-M5 + 18 nye). `npx tsc -b`,
+`npm run lint`, `npm run build` alle grønne og uændrede for al
+eksisterende kode (inklusive v1's urørte `RecommendationQueue`).
+
+**Bevis for immutability:** `next()`/`react()` kaldt på en queue ændrer
+aldrig dens egne `current()`/`remaining()`-værdier bagefter; et separat
+array givet til `create()` og efterfølgende muteret af kalderen (push,
+overskrivning af element 0) påvirker ikke queue'ens egen sekvens; ingen
+`RankedCandidate` queue'en holder på ændres af nogen queue-operation.
+
+**Bevis for determinisme:** to uafhængigt oprettede queues, drevet
+gennem identiske handlingssekvenser (gentagne `next()`-kald), producerer
+identiske resultater hele vejen igennem.
+
+**Bevis for korrekt navigation:** `current()` starter ved første element
+i den givne rækkefølge; `peek()` viser næste uden at fremme; `next()`
+fremmer præcis ét skridt; `remaining()` tæller korrekt ned; en udtømt
+queue forbliver udtømt og wrapper aldrig tilbage til start (ikke-cyklisk,
+verificeret eksplicit med et separat test).
+
+**Bevis for tom queue:** `create([])` giver `current()`/`peek() = null`,
+`remaining() = 0`, uden throw; `next()` på en tom/udtømt queue forbliver
+tom uden throw; `react()` på en tom queue giver `{event: null, queue: uændret}`.
+
+**Bevis for at feedback kun returneres som hændelser:** `react()`s
+returnerede `event` indeholder præcis tre felter (`candidateRef`,
+`trackDnaRef`, `reactionType`) — ingen score, intet breakdown, ingen
+DNA-data; alle tre navngivne reaktionstyper (save/reject/known)
+håndteres identisk på queue-niveau; intet kald til `userDna` eller noget
+andet modul sker nogen steder i `queue/` (verificeret ved gennemlæsning
+af modulets imports — kun `../rankingEngine`s type og egne lokale typer).
+
+**Er milestone 100% færdig ifølge Definition of Done?**
+1. Acceptkriterier (de nye, brugerdefinerede regler) opfyldt — ja, se
+   bevisafsnittene ovenfor. 2. Tests består — ja, 82/82. 3. Ingen
+   TODO/placeholder — ja. 4. Dokumentation opdateret — ja, denne Review
+   Report plus inline-kommentarer i koden. 5. Fungerer isoleret uden
+   fremtidige milestones — ja, intet import af `discovery`, `feedback`,
+   `userDna`, UI, eller v1's `modules/recommendations` noget sted i
+   `queue/`; kun et type-import fra `rankingEngine` (M5). 6. Ingen
+   kendte kritiske fejl — ja. 7. Reviewet mod PRD/TDS/ADR — ja:
+   TDS-afklaringen ovenfor dokumenterer hvorfor v1's konkrete klasse
+   ikke genbruges, uden at det er en ændring af en tidligere milestone
+   (ADR-16 udløses ikke); ADR-16 selv (score vs. breakdown-stabilitet)
+   er ikke relevant for denne milestone. 8. Demonstrerer den tilsigtede
+   værdi — ja: beviset er ikke hvor mange anbefalinger der vises (ingen
+   UI eksisterer endnu), men at systemet kan levere kandidater til et
+   fremtidigt UI på en ren, immutabel, reproducerbar måde.
+
+**Ja — M6 er 100% færdig ifølge Definition of Done (for det scope
+brugeren faktisk satte).**
+
+**Er projektet klar til næste milestone?**
+Ja. M7 (5 feedback-reaktioner) kan bygges på en `RecommendationQueue`
+der allerede strukturerer reaktioner som rene hændelser — det er
+præcis den grænseflade en fremtidig `feedback`-modul har brug for at
+konsumere.
 
 ---
 

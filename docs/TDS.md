@@ -850,6 +850,45 @@ kun til den nuværende kode.
   dokumenteret udvidelse af kontrakten — ikke noget en enkelt
   ranker-implementation kan gøre ensidigt.
 
+### ADR-17 — QueueState er ene ejer af sessionens position
+
+- **Beslutning:** `QueueState` (M6's `RecommendationQueue`) er det
+  eneste sted i systemet der holder eller beregner den aktuelle
+  position i anbefalingssekvensen. Intet andet modul — `discovery`,
+  `feedback`, `analytics`, en fremtidig UI, eller noget andet — må
+  duplikere, cache, eller selv udlede "hvor langt er brugeren nået".
+- **Baggrund:** M6 gjorde `RecommendationQueue` til et immutabelt
+  value-objekt der ejer "kun rækkefølgen" (Rule 1) og al navigation
+  (Rule 6: `current`/`next`/`peek`/`remaining`). Uden denne ADR ville
+  et fremtidigt modul, der har brug for at vide "hvad er den aktuelle
+  kandidat", kunne fristes til at holde sit eget positions-tal
+  synkroniseret med queue'en i stedet for at spørge queue'en selv —
+  to sandheder om samme ting, med den uundgåelige risiko for at de
+  glider ud af sync.
+- **Alternativer overvejet:** (a) lad `discovery` (en fremtidig
+  milestone) holde sit eget "aktuelt index" og kun bruge
+  `RecommendationQueue` til at hente listen initialt; (b) lad
+  `feedback` udlede positionen af hvor mange `FeedbackEvent` der er
+  logget for den aktuelle session, som en implicit tæller.
+- **Hvorfor denne løsning:** Begge alternativer skaber en anden kilde
+  til sandhed om samme tilstand — præcis det ADR-01/ADR-04's
+  event-sourcing-tilgang allerede undgår for `UserDNA` (én kilde:
+  `FeedbackEvent`-loggen) og ADR-05 undgår for DNA-regenerering. At
+  lade et andet modul beregne eller gætte positionen ville også
+  underminere M6's egen determinisme-garanti (Rule 3): to forskellige
+  moduler kunne nå frem til to forskellige "aktuelle" kandidater efter
+  samme handlingssekvens, hvis blot ét af dem havde en bug i sin egen
+  kopi af logikken.
+- **Konsekvenser:** Ethvert fremtidigt modul der har brug for "hvad er
+  den aktuelle/næste kandidat" skal modtage eller forespørge den
+  aktuelle `RecommendationQueue`-state direkte (typisk fra en
+  fremtidig session-/orchestration-lag, endnu ikke bygget) — aldrig
+  rekonstruere eller antage positionen selv. Dette begrænser ikke
+  hvor `RecommendationQueue`s state *opbevares* mellem interaktioner
+  (det er en fremtidig milestones valg, fx `discovery` eller en
+  session-container) — kun at der aldrig findes to uafhængige
+  beregninger af den samme position.
+
 ---
 
 ## 11. Non-functional Requirements (NFR)
