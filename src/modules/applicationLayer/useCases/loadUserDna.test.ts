@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import type { RepositoryFailure } from '../../domainErrors';
+import { repositoryFailure } from '../../domainErrors';
 import { buildAppContext } from '../../infrastructure';
 import type { UserDnaRepository } from '../../persistence';
+import { failure, success, type Result } from '../../result';
 import { validateSignalVector } from '../../trackDna';
 import type { UserDNA } from '../../userDna';
 import { LoadUserDna } from './loadUserDna';
@@ -18,22 +21,25 @@ const buildUserDna = (userId: string): UserDNA => ({
 class FakeUserDnaRepository implements UserDnaRepository {
   public getByIdCalls: string[] = [];
   private readonly fixed: UserDNA | null;
+  private readonly failNextGetById: RepositoryFailure | null;
 
-  constructor(fixed: UserDNA | null) {
+  constructor(fixed: UserDNA | null, failNextGetById: RepositoryFailure | null = null) {
     this.fixed = fixed;
+    this.failNextGetById = failNextGetById;
   }
 
-  async save(): Promise<void> {
+  async save(): Promise<Result<void, RepositoryFailure>> {
     throw new Error('not used in this test');
   }
 
-  async getById(id: string): Promise<UserDNA | null> {
+  async getById(id: string): Promise<Result<UserDNA | null, RepositoryFailure>> {
     this.getByIdCalls.push(id);
-    return this.fixed;
+    if (this.failNextGetById) return failure(this.failNextGetById);
+    return success(this.fixed);
   }
 
-  async getAll(): Promise<UserDNA[]> {
-    return this.fixed ? [this.fixed] : [];
+  async getAll(): Promise<Result<UserDNA[], RepositoryFailure>> {
+    return success(this.fixed ? [this.fixed] : []);
   }
 }
 
@@ -45,13 +51,22 @@ describe('LoadUserDna — dependency injection (M10 Rule 4/5)', () => {
 
     const result = await useCase.execute('user-1');
 
-    expect(result).toEqual(fixedUserDna);
+    expect(result).toEqual(success(fixedUserDna));
     expect(fakeRepository.getByIdCalls).toEqual(['user-1']);
   });
 
-  it('returns null when the injected repository has nothing for that id', async () => {
+  it('returns Success(null) — not a failure — when the injected repository has nothing for that id (M12 Rule 3: not-found is not an error)', async () => {
     const useCase = new LoadUserDna(new FakeUserDnaRepository(null));
-    expect(await useCase.execute('unknown-user')).toBeNull();
+    expect(await useCase.execute('unknown-user')).toEqual(success(null));
+  });
+});
+
+describe('LoadUserDna — error propagation (M12 Rule 4)', () => {
+  it('propagates a RepositoryFailure from the injected repository unchanged, never swallowing or replacing it', async () => {
+    const theFailure = repositoryFailure('UserDnaRepository.getById', 'simulated storage outage');
+    const useCase = new LoadUserDna(new FakeUserDnaRepository(null, theFailure));
+
+    expect(await useCase.execute('user-1')).toEqual(failure(theFailure));
   });
 });
 

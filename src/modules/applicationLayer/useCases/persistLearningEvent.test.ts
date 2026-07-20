@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import type { RepositoryFailure } from '../../domainErrors';
+import { repositoryFailure } from '../../domainErrors';
 import type { LearningEvent } from '../../feedbackPipeline';
 import { buildAppContext } from '../../infrastructure';
 import type { LearningEventRepository } from '../../persistence';
+import { failure, success, type Result } from '../../result';
 import { PersistLearningEvent } from './persistLearningEvent';
 
 const buildLearningEvent = (eventId: string): LearningEvent => ({
@@ -14,17 +17,24 @@ const buildLearningEvent = (eventId: string): LearningEvent => ({
 
 class FakeLearningEventRepository implements LearningEventRepository {
   public savedItems: LearningEvent[] = [];
+  private readonly failNextSave: RepositoryFailure | null;
 
-  async save(item: LearningEvent): Promise<void> {
+  constructor(failNextSave: RepositoryFailure | null = null) {
+    this.failNextSave = failNextSave;
+  }
+
+  async save(item: LearningEvent): Promise<Result<void, RepositoryFailure>> {
+    if (this.failNextSave) return failure(this.failNextSave);
     this.savedItems.push(item);
+    return success(undefined);
   }
 
-  async getById(id: string): Promise<LearningEvent | null> {
-    return this.savedItems.find((item) => item.eventId === id) ?? null;
+  async getById(id: string): Promise<Result<LearningEvent | null, RepositoryFailure>> {
+    return success(this.savedItems.find((item) => item.eventId === id) ?? null);
   }
 
-  async getAll(): Promise<LearningEvent[]> {
-    return this.savedItems;
+  async getAll(): Promise<Result<LearningEvent[], RepositoryFailure>> {
+    return success(this.savedItems);
   }
 }
 
@@ -33,8 +43,9 @@ describe('PersistLearningEvent — dependency injection, no domain logic (M10 Ru
     const fakeRepository = new FakeLearningEventRepository();
     const learningEvent = buildLearningEvent('evt-1');
 
-    await new PersistLearningEvent(fakeRepository).execute(learningEvent);
+    const result = await new PersistLearningEvent(fakeRepository).execute(learningEvent);
 
+    expect(result).toEqual(success(undefined));
     expect(fakeRepository.savedItems).toEqual([learningEvent]);
   });
 
@@ -45,6 +56,15 @@ describe('PersistLearningEvent — dependency injection, no domain logic (M10 Ru
     await new PersistLearningEvent(new FakeLearningEventRepository()).execute(learningEvent);
 
     expect(learningEvent).toEqual(before);
+  });
+});
+
+describe('PersistLearningEvent — error propagation (M12 Rule 4)', () => {
+  it('propagates a RepositoryFailure unchanged, never swallowing it', async () => {
+    const theFailure = repositoryFailure('LearningEventRepository.save', 'simulated storage outage');
+    const useCase = new PersistLearningEvent(new FakeLearningEventRepository(theFailure));
+
+    expect(await useCase.execute(buildLearningEvent('evt-1'))).toEqual(failure(theFailure));
   });
 });
 
@@ -60,7 +80,7 @@ describe('PersistLearningEvent — repository swappability (M10 Rule 4, M11 Rule
     const { repositories } = buildAppContext();
     await new PersistLearningEvent(repositories.learningEventRepository).execute(learningEvent);
 
-    expect(await repositories.learningEventRepository.getById('evt-1')).toEqual(learningEvent);
+    expect(await repositories.learningEventRepository.getById('evt-1')).toEqual(success(learningEvent));
     expect(fakeRepository.savedItems[0]).toEqual(learningEvent);
   });
 });

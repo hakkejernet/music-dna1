@@ -1224,6 +1224,71 @@ ADR-16, når/hvis den besluttes) — bevidst ikke løst her.
   gælder specifikt strukturelle im/eksport-grænser, ikke enhver
   arkitekturregel.
 
+### ADR-28 — Repository-kontrakter returnerer Result i stedet for rå værdier
+
+- **Beslutning:** `Repository<T>`s `save`/`getById`/`getAll` returnerer
+  `Promise<Result<..., RepositoryFailure>>` — aldrig en rå værdi,
+  `null`, eller `undefined` som succes- eller fejlsignal. En
+  lagerhandling er enten en `Success` (med hvad det så indebærer,
+  inklusive et gyldigt "intet fundet" for `getById`) eller en
+  navngivet `Failure`.
+- **Baggrund:** M12 gjorde det til en bindende regel at ingen fejl må
+  skjules og at domænefejl skal beskrives eksplicit, aldrig via en
+  kastet undtagelse eller en tvetydig `null`. Dette ændrer
+  `Repository<T>`s kontrakt, som ADR-22 (M9) beskrev som "stabil" —
+  denne ADR dokumenterer den ændring eksplicit, som M12s egen bindende
+  regel krævede. ADR-22 forbliver bevidst uændret som historisk
+  post: den var korrekt beskrivelse af kontrakten *dengang*, og
+  ændres ikke retroaktivt.
+- **Alternativer overvejet:** (a) bevar `T | null` som returtype og
+  lad kaldere selv opdage fejl via en separat, parallel mekanisme (fx
+  et kastet exception ved reelle lagerfejl, `null` ved "ikke fundet");
+  (b) brug `undefined` for "ikke fundet" og reservér `null` til fejl.
+- **Hvorfor denne løsning:** Begge alternativer genindfører netop den
+  tvetydighed M12 blev startet for at fjerne — en kalder der ser `null`
+  kan ikke vide, uden at læse implementeringen, om det betyder "intet
+  fundet" (normalt) eller "noget gik i stykker" (en fejl der bør
+  propageres). Et explicit `Result` gør de to udfald til to forskellige,
+  ikke-forvekslelige værdier i typesystemet selv.
+- **Konsekvenser:** Enhver fremtidig repository-implementation
+  (IndexedDB, en fjern-backend) skal implementere denne kontrakt
+  uændret. Enhver kalder af en repository skal håndtere begge grene af
+  `Result`, ikke kun den lykkelige — kompilatoren tvinger det, den
+  behøver ikke huskes.
+
+### ADR-29 — Infrastructure oversætter tekniske fejl til domænefejl
+
+- **Beslutning:** Intet teknisk fejlobjekt (en rå `Error`, en
+  browser-/HTTP-specifik fejltype, en stacktrace) forlader nogensinde
+  `infrastructure/`-laget. Hver konkret repository-implementation
+  fanger sin egen tekniske exception og oversætter den til en
+  `RepositoryFailure` med en ren, læsbar `reason`-tekst, før noget
+  andet lag ser den.
+- **Baggrund:** M12 Rule 7 forbyder browser-/HTTP-fejl i domænet og
+  kræver at infrastructure oversætter. `runRepositoryOperation()`
+  (den delte try/catch-mekanisme alle tre `InMemory*Repository`-klasser
+  bruger) er den konkrete implementering af denne regel — denne ADR
+  gør den til en bindende arkitekturbeslutning, ikke kun en
+  implementeringsdetalje i én milestones kode.
+- **Alternativer overvejet:** (a) lad den rå tekniske fejl (fx en
+  `DOMException` fra en fremtidig IndexedDB-implementation) boble
+  direkte op til Application Layer, som selv afgør hvordan den skal
+  fortolkes; (b) log den tekniske fejl et centralt sted og returnér en
+  generisk, kontekstfri `RepositoryFailure` uden `reason`.
+- **Hvorfor denne løsning:** (a) ville gøre Application Layer
+  afhængig af hvilken konkret backend der er i brug — præcis den
+  kobling Dependency Inversion (ADR-25/26) findes for at undgå. (b)
+  ville opfylde "ingen tekniske fejl i domænet" men gøre fejlen
+  ubrugelig til fejlfinding — `reason` bevarer den oprindelige
+  begrundelse som ren tekst uden at lække selve det tekniske
+  fejlobjekt. `describeError()` (M12) er det som gør denne oversættelse
+  konsekvent på tværs af alle tre repositories.
+- **Konsekvenser:** En fremtidig `IndexedDbUserDnaRepository` skal
+  selv fange sine egne tekniske exceptions (fx en `DOMException` fra
+  en afvist transaktion) og oversætte dem gennem samme mønster —
+  ADR-28s kontrakt garanterer formen, denne ADR garanterer at intet
+  teknisk lækker igennem den.
+
 ---
 
 ## 11. Non-functional Requirements (NFR)

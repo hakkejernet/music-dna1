@@ -42,13 +42,17 @@ describe('InMemoryUserDnaRepository composed with learningEngine.learn()', () =>
       recordedAt: '2026-01-01T00:00:00.000Z',
     };
 
-    const loaded = await repository.getById('user-1');
-    if (!loaded) throw new Error('unreachable');
+    const loadedResult = await repository.getById('user-1');
+    if (!loadedResult.success || !loadedResult.value) throw new Error('unreachable');
+    const loaded = loadedResult.value;
 
     const updated = learn(DEFAULT_LEARNING_STRATEGIES, loaded, learningEvent, trackDna);
     await repository.save(updated);
 
-    const reloaded = await repository.getById('user-1');
+    const reloadedResult = await repository.getById('user-1');
+    if (!reloadedResult.success) throw new Error('unreachable');
+    const reloaded = reloadedResult.value;
+
     expect(reloaded?.signals.mainstream.value).toBeGreaterThan(initialUserDna.signals.mainstream.value);
     expect(reloaded?.coldStart).toBe(false);
     expect(reloaded?.version).toBe(2);

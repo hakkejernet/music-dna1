@@ -1,9 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { LearnFromReaction, LoadUserDna, PersistLearningEvent, SaveUserDna } from '../applicationLayer';
 import type { LearningEvent } from '../feedbackPipeline';
+import type { Result } from '../result';
 import { validateSignalVector, type TrackDNA } from '../trackDna';
 import type { UserDNA } from '../userDna';
 import { buildAppContext } from './compositionRoot';
+
+/** Unwraps a Result in a test, failing loudly (not silently) if it's actually a Failure. */
+const expectSuccess = <T>(result: Result<T, unknown>): T => {
+  if (!result.success) throw new Error(`expected Success, got Failure: ${JSON.stringify(result.error)}`);
+  return result.value;
+};
 
 describe('buildAppContext — Composition Root builds the whole system (M11 Rule 3)', () => {
   it('constructs all three repositories and all four use cases', () => {
@@ -33,7 +40,7 @@ describe('buildAppContext — Composition Root builds the whole system (M11 Rule
     // Saved through the use case, read back through the raw repository
     // — only possible if they share the same underlying instance.
     await appContext.useCases.saveUserDna.execute(userDna);
-    expect(await appContext.repositories.userDnaRepository.getById('user-1')).toEqual(userDna);
+    expect(expectSuccess(await appContext.repositories.userDnaRepository.getById('user-1'))).toEqual(userDna);
   });
 });
 
@@ -56,7 +63,7 @@ describe('buildAppContext — no singleton, fresh graph every call (M11 Rule 5)'
     await first.repositories.userDnaRepository.save(userDna);
 
     // Saving into the first graph must never leak into the second.
-    expect(await second.repositories.userDnaRepository.getById('user-1')).toBeNull();
+    expect(expectSuccess(await second.repositories.userDnaRepository.getById('user-1'))).toBeNull();
   });
 });
 
@@ -100,7 +107,7 @@ describe('buildAppContext — the whole system starts with one wiring function (
     };
     await appContext.useCases.learnFromReaction.execute('user-1', learningEvent);
 
-    const reloaded = await appContext.useCases.loadUserDna.execute('user-1');
+    const reloaded = expectSuccess(await appContext.useCases.loadUserDna.execute('user-1'));
     expect(reloaded?.signals.mainstream.value).toBeGreaterThan(initialUserDna.signals.mainstream.value);
     expect(reloaded?.coldStart).toBe(false);
   });

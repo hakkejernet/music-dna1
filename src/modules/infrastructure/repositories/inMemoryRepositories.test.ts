@@ -1,11 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import type { LearningEvent } from '../../feedbackPipeline';
 import type { Repository } from '../../persistence';
+import type { Result } from '../../result';
 import { validateSignalVector, type TrackDNA } from '../../trackDna';
 import type { UserDNA } from '../../userDna';
 import { InMemoryLearningEventRepository } from './inMemoryLearningEventRepository';
 import { InMemoryTrackDnaRepository } from './inMemoryTrackDnaRepository';
 import { InMemoryUserDnaRepository } from './inMemoryUserDnaRepository';
+
+/** Unwraps a Result in a test, failing loudly (not silently) if it's actually a Failure. */
+const expectSuccess = <T>(result: Result<T, unknown>): T => {
+  if (!result.success) throw new Error(`expected Success, got Failure: ${JSON.stringify(result.error)}`);
+  return result.value;
+};
 
 /**
  * One shared contract test suite, run identically against three
@@ -23,18 +30,21 @@ const runRepositoryContractTests = <T>(
   mutateInPlace: (item: T) => void,
 ): void => {
   describe(`${name} — repository contract`, () => {
-    it('save() then getById() returns a deeply-equal, but distinct, object', async () => {
+    it('save() then getById() returns Success with a deeply-equal, but distinct, object', async () => {
       const repository = createRepository();
-      await repository.save(itemA);
-      const found = await repository.getById(idOf(itemA));
+      const saveResult = await repository.save(itemA);
+      expect(saveResult.success).toBe(true);
+
+      const found = expectSuccess(await repository.getById(idOf(itemA)));
 
       expect(found).toEqual(itemA);
       expect(found).not.toBe(itemA);
     });
 
-    it('getById() returns null for an id that was never saved', async () => {
+    it('getById() returns Success(null) — not a failure — for an id that was never saved (M12 Rule 3)', async () => {
       const repository = createRepository();
-      expect(await repository.getById('never-saved')).toBeNull();
+      const result = await repository.getById('never-saved');
+      expect(result).toEqual({ success: true, value: null });
     });
 
     it('mutating the caller\'s object after save() never affects what is stored (M9 Rule 7)', async () => {
@@ -45,18 +55,18 @@ const runRepositoryContractTests = <T>(
       await repository.save(original);
       mutateInPlace(original);
 
-      expect(await repository.getById(idOf(itemA))).toEqual(snapshotBeforeMutation);
+      expect(expectSuccess(await repository.getById(idOf(itemA)))).toEqual(snapshotBeforeMutation);
     });
 
     it('mutating a previously-returned object never affects a later read (M9 Rule 7)', async () => {
       const repository = createRepository();
       await repository.save(itemA);
 
-      const firstRead = await repository.getById(idOf(itemA));
+      const firstRead = expectSuccess(await repository.getById(idOf(itemA)));
       if (!firstRead) throw new Error('unreachable');
       mutateInPlace(firstRead);
 
-      const secondRead = await repository.getById(idOf(itemA));
+      const secondRead = expectSuccess(await repository.getById(idOf(itemA)));
       expect(secondRead).toEqual(itemA);
     });
 
@@ -64,10 +74,10 @@ const runRepositoryContractTests = <T>(
       const repository = createRepository();
       await repository.save(itemA);
 
-      const [firstResult] = await repository.getAll();
+      const [firstResult] = expectSuccess(await repository.getAll());
       mutateInPlace(firstResult);
 
-      const [secondResult] = await repository.getAll();
+      const [secondResult] = expectSuccess(await repository.getAll());
       expect(secondResult).toEqual(itemA);
     });
 
@@ -88,7 +98,7 @@ const runRepositoryContractTests = <T>(
       await repository.save(itemA);
       await repository.save(itemB);
 
-      const all = await repository.getAll();
+      const all = expectSuccess(await repository.getAll());
       expect(all).toHaveLength(2);
       expect(all.find((item) => idOf(item) === idOf(itemA))).toEqual(itemA);
       expect(all.find((item) => idOf(item) === idOf(itemB))).toEqual(itemB);
@@ -99,7 +109,7 @@ const runRepositoryContractTests = <T>(
       await repository.save(itemA);
       await repository.save(itemA);
 
-      expect(await repository.getAll()).toHaveLength(1);
+      expect(expectSuccess(await repository.getAll())).toHaveLength(1);
     });
 
     it('each repository instance owns its own, independent state — no shared/global store (M9 Rule 8)', async () => {
@@ -108,9 +118,9 @@ const runRepositoryContractTests = <T>(
 
       await repositoryOne.save(itemA);
 
-      expect(await repositoryOne.getById(idOf(itemA))).toEqual(itemA);
-      expect(await repositoryTwo.getById(idOf(itemA))).toBeNull();
-      expect(await repositoryTwo.getAll()).toEqual([]);
+      expect(expectSuccess(await repositoryOne.getById(idOf(itemA)))).toEqual(itemA);
+      expect(expectSuccess(await repositoryTwo.getById(idOf(itemA)))).toBeNull();
+      expect(expectSuccess(await repositoryTwo.getAll())).toEqual([]);
     });
   });
 };

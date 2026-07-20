@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import type { RepositoryFailure } from '../../domainErrors';
+import { repositoryFailure, userDnaNotFound } from '../../domainErrors';
 import type { LearningEvent } from '../../feedbackPipeline';
 import { buildAppContext } from '../../infrastructure';
 import { DEFAULT_LEARNING_STRATEGIES, learn, type LearningStrategy } from '../../learningEngine';
 import type { LearningEventRepository, TrackDnaRepository, UserDnaRepository } from '../../persistence';
+import { failure, success, type Result } from '../../result';
 import { validateSignalVector, type TrackDNA } from '../../trackDna';
 import type { UserDNA } from '../../userDna';
 import { LearnFromReaction } from './learnFromReaction';
@@ -38,62 +41,85 @@ class FakeUserDnaRepository implements UserDnaRepository {
   public getByIdCalls: string[] = [];
   public saveCalls: UserDNA[] = [];
   private readonly fixed: UserDNA | null;
+  private readonly failNextGetById: RepositoryFailure | null;
+  private readonly failNextSave: RepositoryFailure | null;
 
-  constructor(fixed: UserDNA | null) {
+  constructor(fixed: UserDNA | null, options: { failNextGetById?: RepositoryFailure; failNextSave?: RepositoryFailure } = {}) {
     this.fixed = fixed;
+    this.failNextGetById = options.failNextGetById ?? null;
+    this.failNextSave = options.failNextSave ?? null;
   }
 
-  async save(item: UserDNA): Promise<void> {
+  async save(item: UserDNA): Promise<Result<void, RepositoryFailure>> {
+    if (this.failNextSave) return failure(this.failNextSave);
     this.saveCalls.push(item);
+    return success(undefined);
   }
 
-  async getById(id: string): Promise<UserDNA | null> {
+  async getById(id: string): Promise<Result<UserDNA | null, RepositoryFailure>> {
     this.getByIdCalls.push(id);
-    return this.fixed;
+    if (this.failNextGetById) return failure(this.failNextGetById);
+    return success(this.fixed);
   }
 
-  async getAll(): Promise<UserDNA[]> {
-    return this.fixed ? [this.fixed] : [];
+  async getAll(): Promise<Result<UserDNA[], RepositoryFailure>> {
+    return success(this.fixed ? [this.fixed] : []);
   }
 }
 
 class FakeTrackDnaRepository implements TrackDnaRepository {
   public getByIdCalls: string[] = [];
   private readonly fixed: TrackDNA | null;
+  private readonly failNextGetById: RepositoryFailure | null;
 
-  constructor(fixed: TrackDNA | null) {
+  constructor(fixed: TrackDNA | null, failNextGetById: RepositoryFailure | null = null) {
     this.fixed = fixed;
+    this.failNextGetById = failNextGetById;
   }
 
-  async save(): Promise<void> {
+  async save(): Promise<Result<void, RepositoryFailure>> {
     throw new Error('not used in this test');
   }
 
-  async getById(id: string): Promise<TrackDNA | null> {
+  async getById(id: string): Promise<Result<TrackDNA | null, RepositoryFailure>> {
     this.getByIdCalls.push(id);
-    return this.fixed;
+    if (this.failNextGetById) return failure(this.failNextGetById);
+    return success(this.fixed);
   }
 
-  async getAll(): Promise<TrackDNA[]> {
-    return this.fixed ? [this.fixed] : [];
+  async getAll(): Promise<Result<TrackDNA[], RepositoryFailure>> {
+    return success(this.fixed ? [this.fixed] : []);
   }
 }
 
 class FakeLearningEventRepository implements LearningEventRepository {
   public saveCalls: LearningEvent[] = [];
+  private readonly failNextSave: RepositoryFailure | null;
 
-  async save(item: LearningEvent): Promise<void> {
+  constructor(failNextSave: RepositoryFailure | null = null) {
+    this.failNextSave = failNextSave;
+  }
+
+  async save(item: LearningEvent): Promise<Result<void, RepositoryFailure>> {
+    if (this.failNextSave) return failure(this.failNextSave);
     this.saveCalls.push(item);
+    return success(undefined);
   }
 
-  async getById(id: string): Promise<LearningEvent | null> {
-    return this.saveCalls.find((item) => item.eventId === id) ?? null;
+  async getById(id: string): Promise<Result<LearningEvent | null, RepositoryFailure>> {
+    return success(this.saveCalls.find((item) => item.eventId === id) ?? null);
   }
 
-  async getAll(): Promise<LearningEvent[]> {
-    return this.saveCalls;
+  async getAll(): Promise<Result<LearningEvent[], RepositoryFailure>> {
+    return success(this.saveCalls);
   }
 }
+
+/** Unwraps a Result in a test, failing loudly (not silently) if it's actually a Failure — keeps the "happy path" tests readable. */
+const expectSuccess = <T>(result: Result<T, unknown>): T => {
+  if (!result.success) throw new Error(`expected Success, got Failure: ${JSON.stringify(result.error)}`);
+  return result.value;
+};
 
 describe('LearnFromReaction — dependency injection (M10 Rule 4/5)', () => {
   it('loads UserDNA and TrackDNA from exactly the injected repositories, using the ids the event names', async () => {
@@ -137,7 +163,7 @@ describe('LearnFromReaction — no domain logic in the Application Layer (M10 Ru
       new FakeLearningEventRepository(),
       DEFAULT_LEARNING_STRATEGIES,
     );
-    const resultFromUseCase = await useCase.execute('user-1', learningEvent);
+    const resultFromUseCase = expectSuccess(await useCase.execute('user-1', learningEvent));
 
     const resultFromDirectCall = learn(DEFAULT_LEARNING_STRATEGIES, userDna, learningEvent, trackDna);
 
@@ -158,13 +184,13 @@ describe('LearnFromReaction — no domain logic in the Application Layer (M10 Ru
       new FakeLearningEventRepository(),
       [fixedResultStrategy],
     );
-    const result = await useCase.execute('user-1', buildLearningEvent());
+    const result = expectSuccess(await useCase.execute('user-1', buildLearningEvent()));
 
     expect(result.signals.mainstream).toEqual({ value: 0.42, confidence: 0.9 });
   });
 });
 
-describe('LearnFromReaction — Learning Engine is unchanged, only called (M10 Rule 3)', () => {
+describe('LearnFromReaction — Learning Engine is unchanged, only called (M10 Rule 3, M12 Rule 5)', () => {
   it('imports and calls learningEngine.learn() without modification — verified by identical output to a direct call', async () => {
     // Same assertion as the "no domain logic" test above, phrased for
     // this specific DoD requirement: the workflow is a thin caller of
@@ -174,18 +200,20 @@ describe('LearnFromReaction — Learning Engine is unchanged, only called (M10 R
     const learningEvent = buildLearningEvent();
 
     const direct = learn(DEFAULT_LEARNING_STRATEGIES, userDna, learningEvent, trackDna);
-    const viaUseCase = await new LearnFromReaction(
-      new FakeUserDnaRepository(userDna),
-      new FakeTrackDnaRepository(trackDna),
-      new FakeLearningEventRepository(),
-      DEFAULT_LEARNING_STRATEGIES,
-    ).execute('user-1', learningEvent);
+    const viaUseCase = expectSuccess(
+      await new LearnFromReaction(
+        new FakeUserDnaRepository(userDna),
+        new FakeTrackDnaRepository(trackDna),
+        new FakeLearningEventRepository(),
+        DEFAULT_LEARNING_STRATEGIES,
+      ).execute('user-1', learningEvent),
+    );
 
     expect(viaUseCase).toEqual(direct);
   });
 });
 
-describe('LearnFromReaction — missing data is handled the same way M8 already does (M10 Rule 1, M8 Rule 7)', () => {
+describe('LearnFromReaction — missing data is handled the same way M8 already does (M10 Rule 1, M8 Rule 7, M12 Rule 5)', () => {
   it('passes null through to learn() when no TrackDNA is found, rather than special-casing it', async () => {
     const userDna = buildUserDna('user-1');
     const useCase = new LearnFromReaction(
@@ -195,13 +223,13 @@ describe('LearnFromReaction — missing data is handled the same way M8 already 
       DEFAULT_LEARNING_STRATEGIES,
     );
 
-    const result = await useCase.execute('user-1', buildLearningEvent());
+    const result = expectSuccess(await useCase.execute('user-1', buildLearningEvent()));
 
     // Identical to what learn() itself does with trackDna = null (M8's own, already-proven behavior).
     expect(result.signals).toEqual(userDna.signals);
   });
 
-  it('throws a clear, simple error when no UserDNA exists for the user — simple propagation, not a fallback (M10 Rule 9)', async () => {
+  it('returns Failure(UserDnaNotFound) — never a fabricated default profile — when no UserDNA exists for the user (M12 Rule 1/6)', async () => {
     const useCase = new LearnFromReaction(
       new FakeUserDnaRepository(null),
       new FakeTrackDnaRepository(buildTrackDna('track-1')),
@@ -209,7 +237,74 @@ describe('LearnFromReaction — missing data is handled the same way M8 already 
       DEFAULT_LEARNING_STRATEGIES,
     );
 
-    await expect(useCase.execute('missing-user', buildLearningEvent())).rejects.toThrow(/missing-user/);
+    const result = await useCase.execute('missing-user', buildLearningEvent());
+
+    expect(result).toEqual(failure(userDnaNotFound('missing-user')));
+  });
+});
+
+describe('LearnFromReaction — error propagation (M12 Rule 4): no logging, no retry, no recovery, no fallback', () => {
+  it('propagates a UserDnaRepository.getById failure unchanged, without attempting TrackDNA lookup or any save', async () => {
+    const theFailure = repositoryFailure('UserDnaRepository.getById', 'simulated outage');
+    const trackDnaRepository = new FakeTrackDnaRepository(buildTrackDna('track-1'));
+    const useCase = new LearnFromReaction(
+      new FakeUserDnaRepository(null, { failNextGetById: theFailure }),
+      trackDnaRepository,
+      new FakeLearningEventRepository(),
+      DEFAULT_LEARNING_STRATEGIES,
+    );
+
+    const result = await useCase.execute('user-1', buildLearningEvent());
+
+    expect(result).toEqual(failure(theFailure));
+    // Never even reached the TrackDNA lookup — the failure stopped the workflow immediately, no partial progress.
+    expect(trackDnaRepository.getByIdCalls).toEqual([]);
+  });
+
+  it('propagates a TrackDnaRepository.getById failure unchanged, without saving anything', async () => {
+    const theFailure = repositoryFailure('TrackDnaRepository.getById', 'simulated outage');
+    const userDnaRepository = new FakeUserDnaRepository(buildUserDna('user-1'));
+    const useCase = new LearnFromReaction(
+      userDnaRepository,
+      new FakeTrackDnaRepository(null, theFailure),
+      new FakeLearningEventRepository(),
+      DEFAULT_LEARNING_STRATEGIES,
+    );
+
+    const result = await useCase.execute('user-1', buildLearningEvent());
+
+    expect(result).toEqual(failure(theFailure));
+    expect(userDnaRepository.saveCalls).toEqual([]);
+  });
+
+  it('propagates a UserDnaRepository.save failure unchanged, without persisting the LearningEvent', async () => {
+    const theFailure = repositoryFailure('UserDnaRepository.save', 'simulated outage');
+    const learningEventRepository = new FakeLearningEventRepository();
+    const useCase = new LearnFromReaction(
+      new FakeUserDnaRepository(buildUserDna('user-1'), { failNextSave: theFailure }),
+      new FakeTrackDnaRepository(buildTrackDna('track-1')),
+      learningEventRepository,
+      DEFAULT_LEARNING_STRATEGIES,
+    );
+
+    const result = await useCase.execute('user-1', buildLearningEvent());
+
+    expect(result).toEqual(failure(theFailure));
+    expect(learningEventRepository.saveCalls).toEqual([]);
+  });
+
+  it('propagates a LearningEventRepository.save failure unchanged, even though the UserDNA was already saved successfully', async () => {
+    const theFailure = repositoryFailure('LearningEventRepository.save', 'simulated outage');
+    const useCase = new LearnFromReaction(
+      new FakeUserDnaRepository(buildUserDna('user-1')),
+      new FakeTrackDnaRepository(buildTrackDna('track-1')),
+      new FakeLearningEventRepository(theFailure),
+      DEFAULT_LEARNING_STRATEGIES,
+    );
+
+    const result = await useCase.execute('user-1', buildLearningEvent());
+
+    expect(result).toEqual(failure(theFailure));
   });
 });
 
@@ -245,11 +340,12 @@ describe('LearnFromReaction — end-to-end via the Composition Root (M11)', () =
 
     const learningEvent = buildLearningEvent();
     const result = await useCases.learnFromReaction.execute('user-1', learningEvent);
+    const updatedUserDna = expectSuccess(result);
 
-    const reloadedUserDna = await repositories.userDnaRepository.getById('user-1');
-    const persistedEvent = await repositories.learningEventRepository.getById('evt-1');
+    const reloadedUserDna = expectSuccess(await repositories.userDnaRepository.getById('user-1'));
+    const persistedEvent = expectSuccess(await repositories.learningEventRepository.getById('evt-1'));
 
-    expect(reloadedUserDna).toEqual(result);
+    expect(reloadedUserDna).toEqual(updatedUserDna);
     expect(reloadedUserDna?.signals.mainstream.value).toBeGreaterThan(initialUserDna.signals.mainstream.value);
     expect(reloadedUserDna?.coldStart).toBe(false);
     expect(persistedEvent).toEqual(learningEvent);

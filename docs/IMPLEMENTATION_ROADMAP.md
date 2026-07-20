@@ -1548,9 +1548,10 @@ ikke kun princippet.
 opleves den som et nedbrud af en almindelig bruger, der ikke kan se
 diagnostikken?
 
-**Status:** ikke udført. Se scope-noten øverst i denne sektion — den
-faktiske M9 blev Persistence Layer. Fejlhåndtering (TDS afsnit 7) er en
-åben, uplanlagt opgave.
+**Status:** genoptaget som M12. Se scope-noten øverst i denne sektion —
+den faktiske M9 blev Persistence Layer; Fejlhåndtering (TDS afsnit 7)
+forblev en åben opgave indtil M12, hvor brugeren eksplicit genoptog den
+under det nye milestone-nummer (se M12 nedenfor).
 
 ### Review Report — M9 (Persistence Layer, det faktiske scope)
 
@@ -1994,6 +1995,179 @@ rigtig `IndexedDbUserDnaRepository` (m.fl.) ville nu naturligt høre
 hjemme i `infrastructure/repositories/`, side om side med
 `InMemory*`-familien, uden at kræve ændringer i `persistence/`,
 `applicationLayer/`, eller `learningEngine/`.
+
+---
+
+## M12 — Fejlhåndtering: ingen mock-fallback (genoptagelse af oprindelig M9)
+
+**Scope-note:** M12 genoptager, efter brugerens eget eksplicitte valg,
+den oprindelige roadmap-M9 ("Fejlhåndtering: ingen mock-fallback",
+historik bevaret under M9 ovenfor) — i modsætning til M9-M11, hvor
+milestone-nummeret pegede på et helt andet emne end det oprindelige
+roadmap, er M12 en bevidst tilbagevenden til et tidligere, udskudt
+formål, blot implementeret med et markant strammere, Result-baseret
+fejlmønster end den oprindelige tekst forestillede sig (som handlede om
+UI-tomme-tilstande og et `?debug=1`-panel — begge eksplicit forbudt af
+M12s egne regler: "Ingen UI. Ingen React. Ingen brugerbeskeder."). Ti
+bindende regler (et fælles Result-mønster, domænespecifikke fejltyper —
+ingen strenge, ingen magic values; repositories returnerer Result, ikke
+null/undefined; Application Layer propagerer uden logging/retry/
+recovery/fallback; Learning Engine uændret; ingen mock-repositories/
+default-user/tomme-lister/syntetisk data; kun domænefejl — infrastructure
+oversætter tekniske fejl; ingen UI; alle eksisterende tests forbliver
+grønne; ingen ændringer i ranking/learning/queue/providers) styrede det
+faktiske arbejde.
+
+### Review Report — M12
+
+**Hvad blev bygget?**
+- `src/modules/result/` — `Success<T>`/`Failure<E>`/`Result<T,E>` samt
+  `success()`/`failure()`/`isSuccess()`/`isFailure()`. Et rent,
+  domæne-uafhængigt mønster (Rule 1) — ingen kobling til noget
+  specifikt domænebegreb.
+- `src/modules/domainErrors/` — fire navngivne, discriminated-union
+  fejltyper (`UserDnaNotFound`, `TrackDnaMissing`, `RepositoryFailure`,
+  `LearningFailure`, jf. Rule 2s eksempler ordret) plus konstruktør-
+  funktioner og `describeError()` (oversætter en ukendt kastet værdi til
+  en ren tekst-begrundelse, Rule 7).
+- `persistence/types.ts` — `Repository<T>`s `save`/`getById`/`getAll`
+  returnerer nu `Promise<Result<..., RepositoryFailure>>` i stedet for
+  en rå værdi/`null` (Rule 3). Se afklaring nedenfor — dette ER en
+  ændring af M9s eget leverede kontrakt, eksplicit krævet af M12s Rule 3.
+- `infrastructure/repositoryOperation.ts` — `runRepositoryOperation()`:
+  det ene, delte sted der omsætter et faktisk kastet teknisk fejl til
+  `Failure(RepositoryFailure)` (Rule 7), brugt af alle tre
+  `InMemory*Repository`-klasser i stedet for ni separate try/catch-blokke.
+- `applicationLayer/useCases/*.ts` — alle fire opdateret:
+  `LoadUserDna`/`SaveUserDna`/`PersistLearningEvent` propagerer
+  repositoryets `Result` uændret; `LearnFromReaction` tjekker hvert
+  trins `Result` eksplicit og stopper ved den første fejl (Rule 4),
+  omsætter `Success(null)` fra `UserDnaRepository.getById` til
+  `Failure(UserDnaNotFound)` (en reel domænebeslutning denne ene use
+  case træffer, jf. Rule 6 — aldrig en fabrikeret standardprofil), og
+  lader en manglende `TrackDNA` forblive `null` ind i `learn()` uændret
+  (M8 Rule 7, stadig bindende).
+- Alle eksisterende tests i `persistence/infrastructure/applicationLayer`
+  opdateret til at pakke/unpakke `Result` — samme påstande som før,
+  ingen svækkede. Nye tests: fejlpropagering pr. trin i
+  `LearnFromReaction` (fire separate scenarier — hvert repository-kald
+  kan fejle, og hver fejl stopper workflowet med det samme, uden
+  delvise skriv), en dedikeret "ingen fallback"-suite
+  (`applicationLayer/noFallback.test.ts`), og en dedikeret
+  fejl-oversættelses-suite med et *rigtigt* kastet `TypeError`
+  (`infrastructure/repositories/errorTranslation.test.ts`, se nedenfor).
+
+**Kontrakt-ændrings-afklaring, gjort eksplicit (ADR-16-vurdering):**
+M12 Rule 3 ("Repositories returnerer Result. Ikke null.") kræver
+direkte en ændring af `persistence/types.ts`s `Repository<T>` — M9s
+eget leverede kontrakt, som ADR-22 kaldte "stabil". Dette er ikke en
+stille, selvinitieret ændring: den er en direkte, ordret konsekvens af
+M12s egen bindende regel, samme mønster som M11 Rule 2 eksplicit
+beordrede flytningen af M9s klasser. Alle fire `applicationLayer`-filer
+og alle tre `infrastructure`-repositories er tilsvarende ændret som en
+nødvendig følge — ikke fordi de selv havde et problem, men fordi de
+implementerer/forbruger den kontrakt Rule 3 ændrer. Ingen kode i
+`learningEngine/`, `rankingEngine/`, `queue/`, `candidateProviders/`,
+eller `enrichment/` er rørt (Rule 10, verificeret ved `git diff` mod
+M11s commit — se bevisafsnit nedenfor). Om ADR-22 selv skal opdateres
+eller en ny ADR skal dokumentere kontrakt-ændringen, overlades til
+brugerens egen vurdering, som ved tidligere lignende afklaringer.
+
+**`Success(null)` vs. `Failure(UserDnaNotFound)`, gjort eksplicit:**
+`getById()` der ikke finder noget er `Success(null)` på repository-
+niveau (et gyldigt, ikke-fejlende udfald — opslaget virkede, der var
+bare intet der) — kun `LearnFromReaction`, som *kræver* et eksisterende
+`UserDNA` for at kunne fortsætte, omsætter det til en `Failure`. `Load-
+UserDna` selv gør ikke denne omsætning — den har intet krav om at et
+`UserDNA` skal eksistere, og propagerer derfor `Success(null)` uændret.
+Dette er en bevidst lagdeling: "ikke fundet" er kun en fejl for den der
+rent faktisk havde brug for at finde det.
+
+**`TrackDnaMissing`/`LearningFailure`, gjort eksplicit (ikke brugt i
+faktisk kode):** begge typer er defineret præcis efter Rule 2s eksempler,
+men produceres ingen steder i den faktiske kode i denne milestone.
+`TrackDnaMissing` ville modsige M8 Rule 7 ("manglende TrackDNA er
+normal tilstand", stadig bindende) hvis `LearnFromReaction` brugte den
+til sit eget TrackDNA-opslag — den er derfor reserveret til en fremtidig
+arbejdsgang der genuint kræver en eksisterende TrackDNA.
+`LearningFailure` har ingen aktuel fejl-kilde at repræsentere, fordi
+`learn()` (uændret, Rule 5) er en ren funktion der for gyldigt input
+altid lykkes — der er intet domænescenarie hvor "læring" selv fejler i
+det nuværende system. Begge er dokumenteret ærligt som "defineret, ikke
+(endnu) affyret" i stedet for tvunget ind i en kunstig brugssituation.
+
+**Hvilke tests blev kørt?**
+`npm run test` → 201/201 grønne (192 opdaterede/eksisterende + 9 helt
+nye i `errorTranslation.test.ts`/`noFallback.test.ts`, plus mindre
+tilføjelser i `learnFromReaction.test.ts`/`loadUserDna.test.ts`/
+`saveUserDna.test.ts`/`persistLearningEvent.test.ts`). `npx tsc -b`,
+`npm run lint`, `npm run build` alle grønne.
+
+**Bevis for ingen fallback:** en helt ny bruger uden noget `UserDNA` får
+`Failure(UserDnaNotFound)` fra `LearnFromReaction` — aldrig en
+fabrikeret standardprofil; et tomt system giver `Success([])` fra
+`getAll()` på alle tre repositories — en reel, tom liste, ikke en
+syntetisk placeholder-liste.
+
+**Bevis for eksplicit fejlpropagering:** fire separate tests viser at
+en `RepositoryFailure` fra ethvert af `LearnFromReaction`s fire
+repository-kald (`UserDnaRepository.getById`/`.save`,
+`TrackDnaRepository.getById`, `LearningEventRepository.save`)
+propagerer uændret og stopper workflowet med det samme — et kald der
+fejler tidligt i sekvensen forhindrer alle efterfølgende kald
+(verificeret: `trackDnaRepository.getByIdCalls` er tom hvis
+`UserDnaRepository.getById` allerede fejlede; intet gemmes til
+`LearningEventRepository` hvis `UserDnaRepository.save` fejlede).
+
+**Bevis for Result-kontrakter:** `persistence/types.ts`s `Repository<T>`
+kræver nu `Promise<Result<...>>` på alle tre metoder, verificeret ved
+kompileringstjek (`npx tsc -b`) af alle implementationer og forbrugere.
+
+**Bevis for ingen null/undefined som fejlsignal:** et dedikeret test
+kalder alle seks læse-operationer (tre repositories × `getById`/`getAll`)
+og bekræfter at hvert resultat er et objekt med et boolesk
+`success`-felt, aldrig en bar `null`/`undefined`.
+
+**Bevis for infrastructure-oversættelse af tekniske fejl:** et
+*rigtigt* kastet `TypeError` ("Converting circular structure to JSON",
+udløst af `JSON.stringify` på en selv-referentiel objektgraf givet til
+`save()`) fanges af `runRepositoryOperation()` og oversættes til
+`{type: 'RepositoryFailure', operation: '...', reason: '...circular...'}`
+— ikke en kontrolleret/gættet fejl, men den faktiske exception en reel
+teknisk fejlkilde ville producere.
+
+**Bevis for at Learning Engine er uændret:** `git diff` mod M11s commit
+for `src/modules/learningEngine/`, `src/modules/rankingEngine/`,
+`src/modules/queue/`, `src/modules/candidateProviders/`, og
+`src/modules/enrichment/` viser ingen ændringer i nogen af de fem
+mapper.
+
+**Er milestone 100% færdig ifølge Definition of Done?**
+1. Acceptkriterier (de nye, brugerdefinerede regler) opfyldt — ja, se
+   bevisafsnittene ovenfor. 2. Tests består — ja, 201/201. 3. Ingen
+   TODO/placeholder — ja. 4. Dokumentation opdateret — ja, denne Review
+   Report plus inline-kommentarer i koden. 5. Fungerer isoleret uden
+   fremtidige milestones — ja, ingen UI/React/browser-API noget sted i
+   de ændrede filer. 6. Ingen kendte kritiske fejl — ja. 7. Reviewet mod
+   PRD/TDS/ADR — ja: kontrakt-ændringen er en direkte, dokumenteret
+   konsekvens af M12s egne regler, ikke en selvinitieret ændring;
+   ADR-16 til ADR-27 er alle respekteret uden for den eksplicit
+   krævede kontrakt-ændring; `learningEngine`/`rankingEngine`/`queue`/
+   `candidateProviders`/`enrichment` er alle bit-for-bit uændrede
+   (Rule 10). 8. Demonstrerer den tilsigtede værdi — ja: beviset er
+   ikke om fejl bliver "håndteret pænt" i en UI (der er ingen UI), men
+   at ingen fejl kan skjules, forfalskes, eller stille forsvinde
+   nogen steder i `persistence`→`infrastructure`→`applicationLayer`-kæden.
+
+**Ja — M12 er 100% færdig ifølge Definition of Done (for det scope
+brugeren faktisk satte).**
+
+**Er projektet klar til næste milestone?**
+Ja, med to åbne punkter: (a) den oprindelige M10 ("Observability/
+kalibrering") og M11 ("To rigtige Candidate Providers") er stadig ikke
+bygget; (b) om ADR-22 skal opdateres til at afspejle at
+`Repository<T>`s kontrakt ændrede sig én gang (med god grund) er en
+åben beslutning, ikke truffet her.
 
 ---
 
