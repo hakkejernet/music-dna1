@@ -1,3 +1,32 @@
+export interface TopArtistsParseError {
+  message: string;
+  stack: string | null;
+  /** Where in the source this was caught — hardcoded, not derived from the (often source-mapless, minified) stack. */
+  location: string;
+}
+
+export interface TopArtistsFirstArtist {
+  name: string | null;
+  id: string | null;
+  /** Object.keys() of the raw first item — exactly what Spotify sent, not what SpotifyArtist assumes. */
+  fields: string[];
+}
+
+/**
+ * Raw, unmapped truth about the GET /me/top/artists call — a second,
+ * debug-only request (only made when ?debug=1 is active) that mirrors
+ * exactly what buildSpotifySeed()'s real request sends, so this reflects
+ * actual Spotify data rather than an error message derived from it.
+ */
+export interface TopArtistsDebug {
+  httpStatus: number | null;
+  itemCount: number | null;
+  firstArtist: TopArtistsFirstArtist | null;
+  parseError: TopArtistsParseError | null;
+  /** Precise reason seedArtistNames ended up empty, if it did. */
+  emptySeedReason: string | null;
+}
+
 export interface SpotifyDiagnostics {
   loginOk: boolean;
   /** Number of top artists Spotify returned — null when the call itself failed (see error). */
@@ -5,6 +34,8 @@ export interface SpotifyDiagnostics {
   /** Names actually passed on to providers as seeds (post-slice, pre-Last.fm-call). */
   seedArtistNames: string[];
   error: string | null;
+  /** Only populated when ?debug=1 is active — see TopArtistsDebug. */
+  topArtistsDebug: TopArtistsDebug | null;
 }
 
 export interface LastFmDiagnostics {

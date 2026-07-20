@@ -1,5 +1,36 @@
 # Changelog
 
+## Debug-panel: rå Spotify-data for GET /me/top/artists
+
+`buildUserProfile()` er nu instrumenteret med et andet, dedikeret
+debug-kald til `/me/top/artists` (samme path, samme `limit=5` som det
+rigtige kald) — kun når `?debug=1` er aktiv. Formålet er at se Spotifys
+faktiske data, ikke en afledt fejlmeddelelse.
+
+- **Nyt i panelet under Spotify**: HTTP-status fra kaldet, antal items i
+  svaret, og den første artist (kun `navn` + `id` + `Object.keys()` af
+  det rå objekt — hvilke felter Spotify faktisk sendte, ikke hvad
+  `SpotifyArtist`-typen antager).
+- **Ved parse-fejl**: eksakt exception-besked, `error.stack`, og en fast
+  fil/linje-label for præcis hvor i `userProfile.ts` den blev fanget
+  (`runTopArtistsDebugFetch()` — ægte kildekode-linjenumre i et
+  ikke-sourcemappet minificeret build kan ikke udtrækkes pålideligt fra
+  stacken, derfor en håndskrevet lokation i stedet for gættet én).
+- **Ved tomme `seedArtistNames`**: en præcis, ikke-gættet forklaring —
+  "HTTP `<status>`", "0 items", "kunne ikke parses som JSON", eller
+  "ikke logget ind" — udledt direkte af det rå debug-svar, ikke af den
+  eksisterende fejlhåndtering.
+- **Ingen anden funktionalitet ændret**: debug-kaldet er en helt separat
+  `fetch()` inde i `userProfile.ts`, kun udført når `isDebugModeEnabled()`
+  er sand. Uden `?debug=1` sker der nul ekstra netværkskald og nul
+  ændring i den eksisterende seed-bygning eller fejlhåndtering.
+- Verificeret: succes viser korrekt HTTP 200/antal/felter; et malformeret
+  JSON-svar viser parse-fejl + lokation + korrekt tom-seed-årsag; et
+  HTTP 403-svar viser status 403 og den præcise årsag; uden `?debug=1`
+  laves der ingen ekstra kald til `/me/top/artists` (bekræftet ved at
+  sammenligne kald-tal med og uden debug-tilstand — nøjagtigt dobbelt så
+  mange med debug slået til, aldrig flere uden).
+
 ## Første konkrete runtime-fejl fanget via Debug-panelet, rettet
 
 Debug-panelet (netop bygget for at kunne se dette uden konsol) viste:

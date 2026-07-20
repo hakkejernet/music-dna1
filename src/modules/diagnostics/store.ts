@@ -1,7 +1,7 @@
 import type { LastFmDiagnostics, RecommendationDiagnostics, SpotifyDiagnostics } from './types';
 
 const emptyDiagnostics = (): RecommendationDiagnostics => ({
-  spotify: { loginOk: false, topArtistsFound: null, seedArtistNames: [], error: null },
+  spotify: { loginOk: false, topArtistsFound: null, seedArtistNames: [], error: null, topArtistsDebug: null },
   lastfm: {
     apiKeyPresent: false,
     apiCallMade: false,

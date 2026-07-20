@@ -12,4 +12,7 @@ export type {
   RecommendationDiagnostics,
   RecommendationSource,
   SpotifyDiagnostics,
+  TopArtistsDebug,
+  TopArtistsFirstArtist,
+  TopArtistsParseError,
 } from './types';

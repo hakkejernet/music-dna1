@@ -52,6 +52,42 @@ export const DebugPanel = ({ open, onClose, diagnostics, scopes }: Props) => {
             <dd>{list(spotify.seedArtistNames)}</dd>
           </dl>
 
+          {spotify.topArtistsDebug && (
+            <>
+              <h5>GET /me/top/artists — rå data</h5>
+              <dl className="debug-panel__list">
+                <dt>HTTP status</dt>
+                <dd>{fmt(spotify.topArtistsDebug.httpStatus)}</dd>
+                <dt>Items i svar</dt>
+                <dd>{fmt(spotify.topArtistsDebug.itemCount)}</dd>
+                <dt>Første artist</dt>
+                <dd>
+                  {spotify.topArtistsDebug.firstArtist
+                    ? `${spotify.topArtistsDebug.firstArtist.name ?? '–'} (id: ${spotify.topArtistsDebug.firstArtist.id ?? '–'}) — felter: ${list(spotify.topArtistsDebug.firstArtist.fields)}`
+                    : '–'}
+                </dd>
+              </dl>
+
+              {spotify.topArtistsDebug.parseError && (
+                <div className="debug-panel__error">
+                  <p>
+                    <strong>Parse-fejl:</strong> {spotify.topArtistsDebug.parseError.message}
+                  </p>
+                  <p>{spotify.topArtistsDebug.parseError.location}</p>
+                  {spotify.topArtistsDebug.parseError.stack && (
+                    <pre className="debug-panel__stack">{spotify.topArtistsDebug.parseError.stack}</pre>
+                  )}
+                </div>
+              )}
+
+              {spotify.seedArtistNames.length === 0 && spotify.topArtistsDebug.emptySeedReason && (
+                <p className="debug-panel__empty-reason">
+                  Tomme seedArtistNames fordi: {spotify.topArtistsDebug.emptySeedReason}
+                </p>
+              )}
+            </>
+          )}
+
           <h5>Last.fm</h5>
           <dl className="debug-panel__list">
             <dt>API key fundet</dt>
