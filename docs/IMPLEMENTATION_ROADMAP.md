@@ -131,6 +131,98 @@ ingen netværk krævet.
 missionen (ikke for tyndt til at ranking kan differentiere, ikke så
 stort at enrichment bliver en flaskehals)?
 
+### Review Report — M1
+
+**Hvad blev bygget?**
+Signal-kataloget (19 MVP-signaler, fordelt på alle fire PRD-kategorier:
+11 akustisk, 6 genre, 1 kulturel, 1 struktur — direkte udledt af PRD's
+egne eksempel-signaler plus et minimum af tilføjelser for kategori-
+dækning), den delte `SignalVector`-type, `TrackDNA`- og `UserDNA`-
+skemaerne (TDS §3), og en valideringsfunktion
+(`validateSignalVector()`) der tager vilkårlig input og altid
+returnerer et skema-korrekt resultat.
+
+To bevidste scope-afgrænsninger, ikke fundet som problemer men som
+tolkning af hvor grænsen mellem "skema" og "funktionalitet fra senere
+milestones" ligger:
+- `UserDNA` og `TrackDNA` er kun typer — ingen kode konstruerer en
+  reel instans endnu. `sourceCandidateRef`/`enrichmentCompleteness`
+  (TrackDNA) og `coldStart`/`sourceLibrarySnapshotRef`/`version`
+  (UserDNA) findes som felter, fordi TDS §3 allerede låste dem, men
+  ingen adfærd udfylder dem — det er M4's og M2's/M8's ansvar.
+- "Ingen to signaler overlapper i betydning" (acceptkriterium 1) er
+  verificeret ved skrevne, indbyrdes afgrænsede beskrivelser
+  (fx `energy` vs. `aggressiveness` vs. `melodicStrength` er
+  eksplicit forklaret som forskellige akser) — det er en semantisk
+  bedømmelse, ikke noget en test kan bevise automatisk. Nævnt
+  eksplicit her i stedet for stille antaget.
+
+**Hvilke filer blev ændret?**
+Kun nye filer, intet eksisterende rørt:
+- `src/modules/trackDna/types.ts`
+- `src/modules/trackDna/signalCatalog.ts`
+- `src/modules/trackDna/validateSignalVector.ts`
+- `src/modules/trackDna/index.ts`
+- `src/modules/userDna/types.ts`
+- `src/modules/userDna/index.ts`
+
+**Hvilke tests blev kørt?**
+9 checks i et midlertidigt script (samme princip som al tidligere
+verifikation i dette projekt: skrevet, kørt via en engangs-`esbuild`-
+bundling for at kunne importere modulets egne, ubundlede
+filsti-imports under Node, derefter fjernet igen — ingen ny permanent
+afhængighed tilføjet). Alle 9 bestod. **Bemærkning:** projektet har
+ingen permanent test-runner konfigureret endnu (ingen vitest/jest) —
+det er ikke besluttet af PRD/TDS/roadmap, og jeg har ikke truffet den
+beslutning ensidigt her, for at holde scope stramt. Hvis fremtidige
+milestones skal have vedvarende regressions-tests, bør valg af
+test-runner besluttes eksplicit, ikke antages.
+
+**Bevis for at alle acceptkriterier er opfyldt:**
+1. *Kataloget er navngivet præcist, ingen overlap* — 19 unikke,
+   ikke-tomme nøgler med >10-tegns beskrivelser, verificeret
+   programmatisk (ingen dubletter) + manuelt gennemlæst for semantisk
+   overlap.
+2. *Fuldt udfyldt objekt validerer korrekt* — testet med alle 19
+   signaler udfyldt; output matcher input eksakt.
+3. *Tomt input → gyldigt skema, nul-confidence overalt, ingen fejl* —
+   testet med `{}` og separat med `null`, `undefined`, en streng, et
+   tal, et array og en funktion som input; alle gav samme korrekte,
+   fejlfrie resultat.
+4. *Delvist/uventet-formet input degraderer kun det ramte felt* —
+   testet med præcis v1's fejlklasse (forkert type på ét felt, ud af
+   normalt talområde, manglende under-felt, `null` i stedet for et
+   objekt) i samme input som gyldige felter — de gyldige felter forblev
+   upåvirkede, kun de defekte felter fik nul-confidence.
+
+**Review Report ifølge roadmap:** dette dokument, jf. formatet defineret
+under "Review Report" i toppen af denne roadmap.
+
+**Er milestone 100% færdig ifølge Definition of Done?**
+1. Acceptkriterier opfyldt — ja (se ovenfor). 2. Tests består — ja,
+9/9. 3. Ingen TODO/placeholder — ja, ingen `TODO`-kommentarer, ingen
+stub-funktioner. 4. Dokumentation opdateret — ja, denne Review Report
++ inline-kommentarer der eksplicit henviser til hvilke fremtidige
+milestones (M2/M4/M8) der udfylder de endnu ikke-brugte felter. 5.
+Fungerer isoleret uden fremtidige milestones — ja, ingen import af
+`userDna`/`trackDna` findes noget andet sted i kodebasen; hele
+projektets eksisterende build/bundle er byte-for-byte uændret
+(samme output-hash før og efter). 6. Ingen kendte kritiske fejl — ja.
+7. Reviewet mod PRD/TDS/ADR — ja, se scope-afgrænsningerne ovenfor,
+alle direkte forankret i TDS §2/§3 og ADR-10/ADR-12. 8. Demonstrerer
+den tilsigtede værdi (teknisk evne) — ja: der findes nu et fælles,
+robust skema begge fremtidige moduler kan bygges videre på, og det
+bevisligt tåler den præcise fejlklasse (manglende/forkert-typet felt)
+der tidligere væltede v1's Spotify-integration.
+
+**Ja — M1 er 100% færdig ifølge Definition of Done.**
+
+**Er projektet klar til næste milestone?**
+Ja. M2 (Cold Start DNA) kan starte uden ændringer i M1's output —
+`validateSignalVector()` og `SIGNAL_CATALOG` er de eneste
+afhængigheder M2 behøver, begge stabile og eksporteret fra
+`trackDna/index.ts`.
+
 ---
 
 ## M2 — Cold Start DNA fra Spotify-bibliotek
