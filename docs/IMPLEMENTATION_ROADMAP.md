@@ -1,8 +1,8 @@
 # Music DNA Rebuilt — Implementation Roadmap
 
-**Status:** Udkast til godkendelse. Oversætter det godkendte
-`docs/PRD.md` og `docs/TDS.md` til en konkret byggerækkefølge. Ingen
-kode er skrevet som del af dette dokument.
+**Status:** Godkendt. Oversætter det godkendte `docs/PRD.md` og
+`docs/TDS.md` til en konkret byggerækkefølge. Ingen kode er skrevet som
+del af dette dokument.
 
 **Princip:** Hver milestone kan implementeres uafhængigt, testes
 isoleret, reviewes før den næste starter, og leverer konkret værdi —
@@ -16,6 +16,50 @@ providers virker). Fase 2's resterende omfang, og Fase 3-4, planlægges
 i egne, senere roadmap-dokumenter, når vi når dertil — af samme grund
 som resten af dette projekt ikke planlægger langt ud over det næste
 bevisbare skridt.
+
+---
+
+## Definition of Done
+
+Denne regel gælder for **hele** Music DNA Rebuilt, ikke kun denne
+roadmap — enhver milestone (M1-M11 og alle fremtidige) er først færdig
+når **alle** otte punkter er opfyldt:
+
+1. Alle acceptkriterier for milestonen er opfyldt.
+2. Alle relevante tests består.
+3. Der findes ingen TODO eller placeholder-kode relateret til
+   milestonen.
+4. Dokumentation er opdateret hvis nødvendigt.
+5. Milestonen fungerer isoleret, uden at afhænge af fremtidige
+   milestones.
+6. Der findes ingen kendte kritiske fejl.
+7. Koden er reviewet i forhold til `docs/PRD.md`, `docs/TDS.md` og
+   TDS'ets Architectural Decision Records.
+8. Milestonen demonstrerer den værdi den er designet til at levere
+   (jf. dens "Type"- og "Acceptkriterier"-felter i denne roadmap).
+
+**Ingen ny milestone må begynde før den forrige er godkendt.** Delvis
+opfyldelse af Definition of Done tæller som ikke færdig — der findes
+ingen "80% færdig, god nok til at fortsætte."
+
+## Review Report
+
+Efter hver milestone skrives en kort Review Report, i dette faste
+format:
+
+- **Hvad blev bygget?**
+- **Hvilke filer blev ændret?**
+- **Hvilke tests blev kørt?**
+- **Hvilke risici er tilbage?**
+- **Er milestone 100% færdig ifølge Definition of Done?**
+- **Er projektet klar til næste milestone?**
+
+Hver Review Report tilføjes som en ny sektion direkte under den
+pågældende milestone i dette dokument, umiddelbart efter den er
+færdig — samme princip som v1's `CHANGELOG.md`: én løbende,
+kronologisk log af hvad der faktisk blev gjort og verificeret, ikke en
+plan for hvad der skulle gøres. Godkendelse af en Review Report er
+selve porten der åbner for den næste milestone.
 
 ---
 
