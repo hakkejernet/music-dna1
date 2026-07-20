@@ -2453,6 +2453,112 @@ M12) er stadig ikke afgjort.
 
 ---
 
+## M15 — Rigtig Candidate Provider (afslutning af oprindelig M11)
+
+**Scope-track (afklaret med brugeren før implementering):** M15's
+regler nævner "CandidateProvider-interfacet"/"Ranking Engine"/"Learning
+Engine"/"Observability" — navne der matcher den nye domænearkitektur
+fra M1-M14. Men den eneste faktiske produktions-mock-fallback i hele
+kodebasen lå i v1-appens `loadRecommendationQueue()`
+(`src/modules/recommendations/`), ikke i den nye arkitektur (som aldrig
+har haft nogen produktionsforbruger af `CandidateProvider` overhovedet).
+Brugeren bekræftede: M15 arbejder i v1-pipelinen. Reglernes referencer
+til de nye moduler er derfor opfyldt som beskyttelsesregler (disse
+moduler rører M15 slet ikke), ikke som selve integrationsmålet.
+
+**Hvilken provider blev valgt, og hvorfor?**
+`LastFmRecommendationProvider` — allerede eksisterende, allerede rigtig
+(bygget i v1 task #36), nu den eneste konfigurerede provider
+(`providerConfig.ts`, uændret siden task #20). Den er allerede stabil
+(fejler aldrig opad, skip-and-continue pr. kunstner) og
+Spotify-uafhængig. Det eneste alternativ, `SpotifyRecommendationProvider`,
+er reelt ikke brugbart: Spotifys `/recommendations`-endpoint er siden
+nov. 2024 spærret for apps uden forhåndsgodkendt "extended quota mode"
+(dokumenteret i dens eget `@deprecated`-notat) — at vælge den ville ikke
+give "relevante anbefalinger", hvilket Rule 2 udtrykkeligt vægter højere
+end antal providers. Ingen ny provider blev derfor bygget — Rule 2
+kræver kun *mindst én* stabil, rigtig provider, og en allerede bevist én
+fandtes.
+
+**Hvad blev fjernet (Rule 1)?**
+`src/modules/recommendations/mockData.ts` (hele filen,
+`createMockRecommendations()`) samt selve fallback-linjen i
+`loadRecommendationQueue.ts` (`recommendations.length > 0 ? recommendations
+: createMockRecommendations()` → nu bruges `recommendations` direkte).
+`src/lib/shuffle.ts` slettet som konsekvens (udelukkende brugt af
+`mockData.ts`). `createMockRecommendations`-eksporten fjernet fra
+`recommendations/index.ts`. `RecommendationSource`-typen ændret fra
+`'lastfm' | 'mock'` til `'lastfm' | 'empty'` — en tom resultatmængde er
+nu en repræsenterbar, ærlig tilstand. `DebugPanel.tsx`: label ændret fra
+"Mock" til "Ingen resultater" (tekstrettelse, ingen redesign).
+
+**Integrationstests tilføjet** (`loadRecommendationQueue.test.ts`, 7
+tests — v1-appen havde ingen tests før denne milestone): (1) rigtige
+kandidater hentes gennem den urørte `LastFmRecommendationProvider` +
+`providerConfig.ts`, kun netværksgrænsen (`../lastfm`) mockes; (2)
+`SimpleRanker` (urørt) anvender stadig sine bonus-/straf-regler og
+sortering på de rigtige kandidater; (3) `modules/diagnostics` (denne
+apps "Observability"-modstykke) modtager normale observationer efter et
+succesfuldt run; (4)/(5) to fejlveje (ingen seeds; Last.fm selv fejler)
+giver begge en tom kø og en rigtig, registreret fejl — aldrig
+fabrikerede anbefalinger; (6)/(7)/(8) tre strukturelle tests beviser
+`mockData.ts` ikke findes, `createMockRecommendations` ikke eksporteres,
+og den konfigurerede provider-liste udelukkende er
+`LastFmRecommendationProvider`.
+
+**Kendte begrænsninger ved LastFmRecommendationProvider (uændret af
+denne milestone):** kræver `VITE_LASTFM_API_KEY`; ingen caching,
+retry/backoff eller cross-source fusion; `genres` altid tom (Last.fm's
+endpoints giver ikke genre-info her); intet rigtigt Spotify track-id
+(kun mbid/syntetisk slug — `modules/spotifyLink` skal stadig
+resolve't); begrænset til 3 seed-kunstnere × 5 lignende kunstnere × 5
+toptracks.
+
+**Plan for fremtidige providers (uden for denne milestones scope):** Den
+oprindelige, aldrig udførte roadmap-M11 (se "Historik"-afsnittet
+nedenfor) foreslog MusicBrainz eller ListenBrainz som en ekstra kilde
+samtidig med Last.fm — stadig en åben, fremtidig opgave. Skulle Spotify
+godkende "extended quota mode" til denne app, er
+`SpotifyRecommendationProvider` allerede skrevet og kan lægges tilbage i
+`providerConfig.ts`s array uden ændringer andre steder.
+
+**Præcisering, tilføjet efter brugerens review:** M15 afslutter den
+arkitektoniske roadmap. Den kørende Discovery-pipeline anvender fortsat
+v1-implementeringen. Migration til den nye arkitektur er en separat
+produktfase.
+
+**Hvilke tests blev kørt?**
+`npm run test` → 251/251 grønne (244 fra M1-M14, uændrede, + 7 nye).
+`npx tsc -b`, `npm run lint`, `npm run build` alle grønne.
+
+**Bevis for at CandidateProvider/Ranking Engine/Learning
+Engine/Observability er uændrede (Rule 3-6):** `git diff` mod M14s
+commit (`ee2f704`) for `src/modules/candidateProviders/`,
+`rankingEngine/`, `learningEngine/`, `observability/` → 0 linjer i alle
+fire mapper. `git status` viser præcis 7 filer rørt/oprettet, alle i
+v1-appens Discovery-sti.
+
+**Er milestone 100% færdig ifølge Definition of Done?**
+1. Acceptkriterier opfyldt — ja, se bevisafsnittene ovenfor. 2. Tests
+   består — ja, 251/251. 3. Ingen TODO/placeholder — ja. 4.
+   Dokumentation opdateret — ja, denne Review Report plus
+   inline-kommentarer. 5. Fungerer isoleret uden fremtidige milestones —
+   ja, nul rør ved den nye arkitektur. 6. Ingen kendte kritiske fejl —
+   ja. 7. Reviewet mod PRD/TDS/ADR — ADR-16 til ADR-32 er alle
+   respekteret, ingen tidligere milestone ændret. 8. Demonstrerer den
+   tilsigtede værdi — ja: Discovery-siden viser nu udelukkende rigtige,
+   Last.fm-afledte anbefalinger, aldrig fabrikerede sange, selv når
+   kilden svigter.
+
+**Ja — M15 er 100% færdig ifølge Definition of Done.**
+
+**Er projektet klar til næste milestone?**
+Ja. Den arkitektoniske roadmap (M1-M15) er nu afsluttet; den kørende
+Discovery-pipeline anvender fortsat v1-implementeringen, og migration
+til den nye arkitektur er en separat, fremtidig produktfase.
+
+---
+
 ## Historik: oprindelig M11 (ikke udført)
 
 **Scope-note tilføjet efter M3 (afventer godkendelse, ikke selvstændigt

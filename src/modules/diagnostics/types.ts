@@ -47,7 +47,8 @@ export interface LastFmDiagnostics {
   error: string | null;
 }
 
-export type RecommendationSource = 'lastfm' | 'mock';
+/** M15: 'mock' was removed together with the production mock-data fallback — an empty result is now a real, representable outcome instead of being papered over. */
+export type RecommendationSource = 'lastfm' | 'empty';
 
 export interface QueueDiagnostics {
   /** Recommendations from providers, after the already-saved filter, before SimpleRanker. */
@@ -64,7 +65,7 @@ export interface RecommendationDiagnostics {
   spotify: SpotifyDiagnostics;
   lastfm: LastFmDiagnostics;
   queue: QueueDiagnostics | null;
-  /** Set only when queue.source === 'mock' — the precise reason mock data was used. */
+  /** Set only when queue.source === 'empty' — the precise reason no real recommendations were found. */
   fallbackReason: string | null;
   /** First 10 recommendations that ended up in the queue, formatted "Title — Artist". */
   topRecommendations: string[];

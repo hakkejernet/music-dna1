@@ -2,9 +2,10 @@ import type { Recommendation } from './types';
 
 /**
  * Holds the sequence of songs Discovery shows the user, decoupled from
- * where those recommendations come from. Today it's seeded with mock
- * data or ranked provider results; later more sources can populate it
- * the same way, without Discovery's UI needing to change.
+ * where those recommendations come from. Today it's seeded with ranked
+ * provider results (or nothing, if every provider came back empty — see
+ * M15 Rule 7); later more sources can populate it the same way, without
+ * Discovery's UI needing to change.
  *
  * Generic over T so callers that rank recommendations (see
  * modules/ranking) can hold RankedRecommendation — which still is-a

@@ -2,7 +2,6 @@ import { getRecommendationDiagnostics, resetRecommendationDiagnostics, updateRec
 import { getSavedTrackIds } from '../history';
 import { buildPreferenceProfile } from '../preferences';
 import { SimpleRanker, type RankedRecommendation } from '../ranking';
-import { createMockRecommendations } from './mockData';
 import { getConfiguredProviders } from './providerConfig';
 import { RecommendationQueue } from './recommendationQueue';
 import type { Recommendation, UserProfile } from './types';
@@ -32,7 +31,7 @@ const buildProfileSafely = async (): Promise<UserProfile> => {
 
 const ranker = new SimpleRanker();
 
-/** Priority-ordered — matches the exact categories the DebugPanel shows. Only called once mock was actually used. */
+/** Priority-ordered — matches the exact categories the DebugPanel shows. Only called once the queue actually ended up empty. */
 const determineFallbackReason = (): string => {
   const diagnostics = getRecommendationDiagnostics();
   if (!diagnostics.spotify.topArtistsFound) {
@@ -52,13 +51,15 @@ const determineFallbackReason = (): string => {
  * Runs every configured provider (see providerConfig.ts) and concatenates
  * whatever they return — no fusion across sources yet. A provider that
  * throws is treated as contributing nothing, not as a fatal error. If
- * every provider comes back empty, this falls back to the existing mock
- * recommendations. Already-saved tracks (see modules/history) are filtered
- * out so a song the user saved once never resurfaces in a later session.
- * Whatever's left is run through SimpleRanker — together with a
- * PreferenceProfile learned purely from local save/reject history (see
- * modules/preferences) — before it reaches the queue, so
- * RecommendationQueue holds RankedRecommendation objects.
+ * every provider comes back empty, the queue is simply empty — this never
+ * fabricates recommendations to fill the gap (M15 Rule 7; the mock-data
+ * fallback that used to live here has been removed, M15 Rule 1).
+ * Already-saved tracks (see modules/history) are filtered out so a song
+ * the user saved once never resurfaces in a later session. Whatever's
+ * left is run through SimpleRanker — together with a PreferenceProfile
+ * learned purely from local save/reject history (see modules/preferences)
+ * — before it reaches the queue, so RecommendationQueue holds
+ * RankedRecommendation objects.
  */
 export const loadRecommendationQueue = async (): Promise<RecommendationQueue<RankedRecommendation>> => {
   resetRecommendationDiagnostics();
@@ -74,24 +75,22 @@ export const loadRecommendationQueue = async (): Promise<RecommendationQueue<Ran
     return [];
   });
 
-  const batch = recommendations.length > 0 ? recommendations : createMockRecommendations();
-
   const savedTrackIds = await getSavedTrackIds();
-  const unseen = batch.filter((recommendation) => !savedTrackIds.has(recommendation.track.id));
+  const unseen = recommendations.filter((recommendation) => !savedTrackIds.has(recommendation.track.id));
 
   const preferences = await buildPreferenceProfile();
   const ranked = ranker.rank({ recommendations: unseen, profile, preferences });
 
   const queue = new RecommendationQueue<RankedRecommendation>(ranked);
-  const usedMock = recommendations.length === 0;
+  const isEmpty = recommendations.length === 0;
   updateRecommendationDiagnostics({
     queue: {
       beforeRanking: unseen.length,
       afterRanking: ranked.length,
       inQueue: queue.size,
-      source: usedMock ? 'mock' : 'lastfm',
+      source: isEmpty ? 'empty' : 'lastfm',
     },
-    fallbackReason: usedMock ? determineFallbackReason() : null,
+    fallbackReason: isEmpty ? determineFallbackReason() : null,
     topRecommendations: ranked
       .slice(0, 10)
       .map((recommendation) => `${recommendation.track.name} — ${recommendation.track.artists.map((artist) => artist.name).join(', ')}`),

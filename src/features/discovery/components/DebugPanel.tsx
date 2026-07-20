@@ -113,7 +113,7 @@ export const DebugPanel = ({ open, onClose, diagnostics, scopes }: Props) => {
             <dt>Recommendations i queue</dt>
             <dd>{queue ? queue.inQueue : '–'}</dd>
             <dt>Kilde</dt>
-            <dd>{queue ? (queue.source === 'lastfm' ? 'Last.fm' : 'Mock') : '–'}</dd>
+            <dd>{queue ? (queue.source === 'lastfm' ? 'Last.fm' : 'Ingen resultater') : '–'}</dd>
           </dl>
         </section>
 
