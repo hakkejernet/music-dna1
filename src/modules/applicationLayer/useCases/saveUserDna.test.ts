@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { InMemoryUserDnaRepository } from '../../persistence';
+import { buildAppContext } from '../../infrastructure';
 import type { UserDnaRepository } from '../../persistence';
 import { validateSignalVector } from '../../trackDna';
 import type { UserDNA } from '../../userDna';
@@ -51,17 +51,19 @@ describe('SaveUserDna — dependency injection, no domain logic (M10 Rule 1/2/4)
   });
 });
 
-describe('SaveUserDna — repository swappability (M10 Rule 4)', () => {
-  it('works identically against a fake and against the real InMemoryUserDnaRepository (M9)', async () => {
+describe('SaveUserDna — repository swappability (M10 Rule 4, M11 Rule 4/8)', () => {
+  it('works identically against a fake and against the real repository the Composition Root wires (M11)', async () => {
     const userDna = buildUserDna('user-1');
 
     const fakeRepository = new FakeUserDnaRepository();
     await new SaveUserDna(fakeRepository).execute(userDna);
 
-    const inMemoryRepository = new InMemoryUserDnaRepository();
-    await new SaveUserDna(inMemoryRepository).execute(userDna);
+    // Only buildAppContext() names a concrete implementation — this
+    // test never imports InMemoryUserDnaRepository directly.
+    const { repositories } = buildAppContext();
+    await new SaveUserDna(repositories.userDnaRepository).execute(userDna);
 
-    expect(await inMemoryRepository.getById('user-1')).toEqual(userDna);
+    expect(await repositories.userDnaRepository.getById('user-1')).toEqual(userDna);
     expect(fakeRepository.savedItems[0]).toEqual(userDna);
   });
 });

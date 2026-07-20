@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { LearningEvent } from '../../feedbackPipeline';
+import { buildAppContext } from '../../infrastructure';
 import { DEFAULT_LEARNING_STRATEGIES, learn, type LearningStrategy } from '../../learningEngine';
-import { InMemoryLearningEventRepository, InMemoryTrackDnaRepository, InMemoryUserDnaRepository } from '../../persistence';
 import type { LearningEventRepository, TrackDnaRepository, UserDnaRepository } from '../../persistence';
 import { validateSignalVector, type TrackDNA } from '../../trackDna';
 import type { UserDNA } from '../../userDna';
@@ -233,22 +233,21 @@ describe('LearnFromReaction — no mutation (M10 Rule 7)', () => {
   });
 });
 
-describe('LearnFromReaction — end-to-end with the real InMemory repositories (M9)', () => {
-  it('runs the full load → learn → save workflow against real InMemory repositories', async () => {
-    const userDnaRepository = new InMemoryUserDnaRepository();
-    const trackDnaRepository = new InMemoryTrackDnaRepository();
-    const learningEventRepository = new InMemoryLearningEventRepository();
+describe('LearnFromReaction — end-to-end via the Composition Root (M11)', () => {
+  it('runs the full load → learn → save workflow against the real, wired system from buildAppContext() — the whole system started with one wiring function', async () => {
+    // No InMemory*Repository is named anywhere in this file — the real
+    // implementations come only from buildAppContext() (M11 Rule 3/4).
+    const { repositories, useCases } = buildAppContext();
 
     const initialUserDna = buildUserDna('user-1');
-    await userDnaRepository.save(initialUserDna);
-    await trackDnaRepository.save(buildTrackDna('track-1'));
+    await repositories.userDnaRepository.save(initialUserDna);
+    await repositories.trackDnaRepository.save(buildTrackDna('track-1'));
 
     const learningEvent = buildLearningEvent();
-    const useCase = new LearnFromReaction(userDnaRepository, trackDnaRepository, learningEventRepository, DEFAULT_LEARNING_STRATEGIES);
-    const result = await useCase.execute('user-1', learningEvent);
+    const result = await useCases.learnFromReaction.execute('user-1', learningEvent);
 
-    const reloadedUserDna = await userDnaRepository.getById('user-1');
-    const persistedEvent = await learningEventRepository.getById('evt-1');
+    const reloadedUserDna = await repositories.userDnaRepository.getById('user-1');
+    const persistedEvent = await repositories.learningEventRepository.getById('evt-1');
 
     expect(reloadedUserDna).toEqual(result);
     expect(reloadedUserDna?.signals.mainstream.value).toBeGreaterThan(initialUserDna.signals.mainstream.value);

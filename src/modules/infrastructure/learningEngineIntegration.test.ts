@@ -3,17 +3,17 @@ import type { LearningEvent } from '../feedbackPipeline';
 import { DEFAULT_LEARNING_STRATEGIES, learn } from '../learningEngine';
 import { validateSignalVector, type TrackDNA } from '../trackDna';
 import type { UserDNA } from '../userDna';
-import { InMemoryUserDnaRepository } from './inMemory/inMemoryUserDnaRepository';
+import { InMemoryUserDnaRepository } from './repositories/inMemoryUserDnaRepository';
 
 /**
  * Demonstrates M9 Rule 5 ("Learning Engine må kun kende interfacet")
  * from the other direction: `learningEngine` (M8) needs no code change
- * and no import of `persistence` at all to be used together with a
- * repository — the composition (load → learn → save) happens entirely
- * from *this* module's side, through the repository interface alone.
- * `learningEngine/`'s own source files import nothing from
- * `persistence/` (verified by inspection — see Review Report); this
- * test is the executable half of that proof.
+ * and no import of `persistence` or `infrastructure` at all to be used
+ * together with a repository — the composition (load → learn → save)
+ * happens entirely from *this* module's side, through the repository
+ * interface alone. `learningEngine/`'s own source files import nothing
+ * from `persistence/` or `infrastructure/` (verified by inspection —
+ * see Review Report); this test is the executable half of that proof.
  */
 describe('InMemoryUserDnaRepository composed with learningEngine.learn()', () => {
   it('loads a UserDNA, learns from an event, and saves the result — with learn() untouched by persistence concerns', async () => {

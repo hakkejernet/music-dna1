@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { LearningEvent } from '../../feedbackPipeline';
-import { InMemoryLearningEventRepository } from '../../persistence';
+import { buildAppContext } from '../../infrastructure';
 import type { LearningEventRepository } from '../../persistence';
 import { PersistLearningEvent } from './persistLearningEvent';
 
@@ -48,17 +48,19 @@ describe('PersistLearningEvent — dependency injection, no domain logic (M10 Ru
   });
 });
 
-describe('PersistLearningEvent — repository swappability (M10 Rule 4)', () => {
-  it('works identically against a fake and against the real InMemoryLearningEventRepository (M9)', async () => {
+describe('PersistLearningEvent — repository swappability (M10 Rule 4, M11 Rule 4/8)', () => {
+  it('works identically against a fake and against the real repository the Composition Root wires (M11)', async () => {
     const learningEvent = buildLearningEvent('evt-1');
 
     const fakeRepository = new FakeLearningEventRepository();
     await new PersistLearningEvent(fakeRepository).execute(learningEvent);
 
-    const inMemoryRepository = new InMemoryLearningEventRepository();
-    await new PersistLearningEvent(inMemoryRepository).execute(learningEvent);
+    // Only buildAppContext() names a concrete implementation — this
+    // test never imports InMemoryLearningEventRepository directly.
+    const { repositories } = buildAppContext();
+    await new PersistLearningEvent(repositories.learningEventRepository).execute(learningEvent);
 
-    expect(await inMemoryRepository.getById('evt-1')).toEqual(learningEvent);
+    expect(await repositories.learningEventRepository.getById('evt-1')).toEqual(learningEvent);
     expect(fakeRepository.savedItems[0]).toEqual(learningEvent);
   });
 });

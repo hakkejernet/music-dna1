@@ -1851,7 +1851,153 @@ sammensætningsopgave.
 
 ---
 
-## M11 — To rigtige Candidate Providers (bevis på pluggability)
+## M11 — Infrastructure Adapters
+
+**Scope-note (afløser oprindelig beskrivelse nedenfor — samme type
+divergens som M9's og M10's):** da M11 skulle påbegyndes, satte
+brugeren scopet til Infrastructure Adapters — flytte de konkrete
+`InMemoryRepository`-klasser til et eget infrastructure-lag, indføre en
+Composition Root, og en `AppContext`. Dette er et **helt andet emne**
+end det oprindelige roadmaps M11 ("To rigtige Candidate Providers",
+gengivet nedenfor som historik). Den oprindelige M11 er derfor **ikke
+udført** og forbliver en åben, uplanlagt opgave — nu den tredje i
+rækken efter M9's "Fejlhåndtering" og M10's "Observability/kalibrering".
+Ti bindende regler for det faktiske M11 (infrastructure ejer konkrete
+implementationer, domænet ejer interfaces; InMemoryRepository-klasserne
+flyttes, kontrakterne forbliver hvor de er; en Composition Root er det
+eneste sted konkrete implementeringer må konstrueres; Application Layer
+må aldrig kalde `new InMemory...` eller kende konkrete klasser; ingen
+service locator/global container/singleton; en `AppContext` beskriver
+wiring, ikke runtime state; intet IndexedDB/browser/React/UI; ingen
+domæne- eller persistence-logik i infrastructure-laget, kun komposition;
+Learning Engine og repository-kontrakterne forbliver uændrede; alle
+eksisterende tests skal forblive grønne) styrede det faktiske arbejde.
+
+### Review Report — M11 (Infrastructure Adapters, det faktiske scope)
+
+**Hvad blev bygget/flyttet?**
+- De tre `InMemory*Repository`-klasser samt `deepClone()` og deres
+  tilhørende tests er flyttet (via `git mv`, historik bevaret) fra
+  `src/modules/persistence/` til `src/modules/infrastructure/` — kun
+  import-stier justeret, ingen adfærdsændring. `src/modules/persistence/`
+  indeholder nu **kun** `types.ts` (kontrakterne) og en tilsvarende
+  slanket `index.ts` — `persistence/types.ts` er byte-for-byte
+  identisk med før M11 (`git diff` mod M9's commit viser intet).
+- `infrastructure/appContext.ts` — `AppContext`-interfacet: to
+  navngivne grupper, `repositories` og `useCases`, intet andet. Ingen
+  metode, intet felt der kan ændre sig efter konstruktion.
+- `infrastructure/compositionRoot.ts` — `buildAppContext(): AppContext`:
+  den ENESTE funktion i systemet der skriver `new InMemory...`.
+  Konstruerer de tre repositories, injicerer dem i de fire
+  Application Services fra M10 (uændrede — kun *brugt*, aldrig
+  ændret), og returnerer en frisk `AppContext` hver gang.
+- `src/architecture.test.ts` — en statisk, eksekverbar arkitektur-
+  grænsetest: scanner hele `src/`-træet for faktiske imports/
+  konstruktioner (`new ClassName(`, `import { ClassName } from`) af de
+  tre konkrete repository-klasser, og fejler hvis nogen findes uden for
+  `src/modules/infrastructure/`.
+- `infrastructure/compositionRoot.test.ts` — beviser at
+  `buildAppContext()` bygger hele systemet, at to kald giver to
+  uafhængige objekt-grafer, at `AppContext` kun har de to
+  wiring-grupper, og at hele load→learn→save-flowet kan køres gennem
+  intet andet end det `buildAppContext()` returnerer.
+- Fire eksisterende M10-testfiler (`loadUserDna.test.ts`,
+  `saveUserDna.test.ts`, `persistLearningEvent.test.ts`,
+  `learnFromReaction.test.ts`) er opdateret: deres "swappability"/
+  "end-to-end"-tests konstruerede tidligere `new InMemory...Repository()`
+  direkte — det ville nu være en grænseovertrædelse (Rule 4 gælder også
+  test-filer, ikke kun produktionskode, jf. dette milestones egen
+  DoD-formulering "ingen konkrete repository-imports uden for
+  infrastructure"). De bruger nu `buildAppContext()` fra
+  `infrastructure` i stedet — samme testdækning, samme beviste
+  egenskaber, ingen konkret klasse nævnt ved navn i `applicationLayer/`
+  længere, heller ikke i dens tests.
+
+**Ændringer i tidligere milestoners filer, gjort eksplicit (ADR-16
+vurdering):** Rule 2 selv beordrer flytningen af M9's klasser — det er
+ikke en stille, selvinitieret ændring, men en direkte konsekvens af
+M11s eget, eksplicitte scope. De fire M10-testfiler er også ændret
+(kun deres test-opsætning, ikke hvad de beviser eller hvordan
+`LoadUserDna`/`SaveUserDna`/`PersistLearningEvent`/`LearnFromReaction`
+selv virker) — samme begrundelse. **Ingen produktionskode i
+`applicationLayer/` eller `learningEngine/` er ændret** — kun deres
+tests' opsætning af *hvor de får en rigtig repository fra*. Efter
+brugerens egen vurdering afgør om dette kræver en selvstændig ADR,
+eller om det — ligesom M6's og M9's tilsvarende afklaringer — er
+tilstrækkeligt dokumenteret her som en direkte konsekvens af M11s egne
+regler.
+
+**Tooling-note, gjort eksplicit (ikke en milestone-ændring):**
+`tsconfig.app.json` fik `"node"` tilføjet til sin `types`-liste, så
+`src/architecture.test.ts` kan bruge `node:fs`/`node:path`/`node:url`
+til at scanne kildetræet. `@types/node` var allerede en devDependency
+(brugt af `tsconfig.node.json` for `vite.config.ts`) — dette er en
+étlinjes, additiv udvidelse af hvilke globale typer der er tilgængelige
+i `src/`, ikke en ændring af nogen milestones egen leverance.
+
+**Hvilke tests blev kørt?**
+`npm run test` → 176/176 grønne (169 fra M1-M10, uændrede i deres
+påstande, + 7 nye i `compositionRoot.test.ts`/`architecture.test.ts`).
+`npx tsc -b`, `npm run lint`, `npm run build` alle grønne.
+
+**Bevis for Dependency Inversion:** `applicationLayer/`s
+produktionsfiler importerer udelukkende typer fra `persistence`
+(kontrakter) og `learningEngine`/`feedbackPipeline`/`userDna` (data-
+former) — aldrig fra `infrastructure`. `infrastructure/`s klasser
+implementerer de samme kontrakter. Afhængighedspilene peger begge
+*ind mod* de af domænet ejede interfaces, ingen peger *ud mod* en
+konkret implementation.
+
+**Bevis for Composition Root:** `compositionRoot.test.ts` viser
+`buildAppContext()` konstruerer alle tre repositories og alle fire use
+cases, at de deler de samme repository-instanser internt (gemt via ét
+use case, læst via et andet), og at to kald giver fuldstændigt
+uafhængige grafer (ingen singleton).
+
+**Bevis for ingen konkrete repository-imports uden for infrastructure:**
+`architecture.test.ts` scanner samtlige `.ts`/`.tsx`-filer i `src/` og
+fejler hvis nogen fil uden for `src/modules/infrastructure/` importerer
+eller konstruerer en af de tre `InMemory*Repository`-klasser — kører
+grønt efter opdateringen af M10s testfiler.
+
+**Bevis for at AppContext kun beskriver afhængigheder:** et test
+verificerer at det returnerede objekt har præcis to nøgler
+(`repositories`, `useCases`) og ingen andre — ingen tæller, ingen
+cache, intet der kan ændre sig efter `buildAppContext()` returnerer.
+
+**Er milestone 100% færdig ifølge Definition of Done?**
+1. Acceptkriterier (de nye, brugerdefinerede regler) opfyldt — ja, se
+   bevisafsnittene ovenfor. 2. Tests består — ja, 176/176. 3. Ingen
+   TODO/placeholder — ja. 4. Dokumentation opdateret — ja, denne Review
+   Report plus inline-kommentarer i koden. 5. Fungerer isoleret uden
+   fremtidige milestones — ja, intet IndexedDB/browser-API/React/UI
+   noget sted i `infrastructure/`. 6. Ingen kendte kritiske fejl — ja.
+   7. Reviewet mod PRD/TDS/ADR — ja: flytningen og test-opdateringerne
+   er begge direkte, eksplicitte konsekvenser af M11s egne regler, ikke
+   selvinitierede ændringer; ADR-16 til ADR-25 er alle respekteret
+   (Learning Engine og repository-kontrakterne er bit-for-bit
+   uændrede). 8. Demonstrerer den tilsigtede værdi — ja: beviset er
+   ikke om IndexedDB virker (det er her stadig in-memory), men at
+   infrastrukturen kan udskiftes uden at påvirke Application Layer
+   eller Domain — bevist ved at hele Application Layer og dens tests nu
+   udelukkende taler til interfaces og til `buildAppContext()`, aldrig
+   til en konkret klasse.
+
+**Ja — M11 er 100% færdig ifølge Definition of Done (for det scope
+brugeren faktisk satte).**
+
+**Er projektet klar til næste milestone?**
+Ja, med tre åbne punkter at være bevidst om: de oprindelige M9
+("Fejlhåndtering"), M10 ("Observability/kalibrering"), og M11 ("To
+rigtige Candidate Providers") er alle stadig ikke bygget. En fremtidig,
+rigtig `IndexedDbUserDnaRepository` (m.fl.) ville nu naturligt høre
+hjemme i `infrastructure/repositories/`, side om side med
+`InMemory*`-familien, uden at kræve ændringer i `persistence/`,
+`applicationLayer/`, eller `learningEngine/`.
+
+---
+
+## Historik: oprindelig M11 (ikke udført)
 
 **Scope-note tilføjet efter M3 (afventer godkendelse, ikke selvstændigt
 besluttet):** M3's bruger-instruktion udelukkede rigtige API-kald, så

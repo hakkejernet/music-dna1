@@ -1,6 +1,6 @@
 import type { LearningEvent } from '../../feedbackPipeline';
 import { deepClone } from '../deepClone';
-import type { LearningEventRepository } from '../types';
+import type { LearningEventRepository } from '../../persistence';
 
 /**
  * Each instance owns its own `Map`, keyed by `eventId` — no shared or

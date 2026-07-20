@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import type { LearningEvent } from '../feedbackPipeline';
-import { validateSignalVector, type TrackDNA } from '../trackDna';
-import type { UserDNA } from '../userDna';
-import { InMemoryLearningEventRepository } from './inMemory/inMemoryLearningEventRepository';
-import { InMemoryTrackDnaRepository } from './inMemory/inMemoryTrackDnaRepository';
-import { InMemoryUserDnaRepository } from './inMemory/inMemoryUserDnaRepository';
-import type { Repository } from './types';
+import type { LearningEvent } from '../../feedbackPipeline';
+import type { Repository } from '../../persistence';
+import { validateSignalVector, type TrackDNA } from '../../trackDna';
+import type { UserDNA } from '../../userDna';
+import { InMemoryLearningEventRepository } from './inMemoryLearningEventRepository';
+import { InMemoryTrackDnaRepository } from './inMemoryTrackDnaRepository';
+import { InMemoryUserDnaRepository } from './inMemoryUserDnaRepository';
 
 /**
  * One shared contract test suite, run identically against three

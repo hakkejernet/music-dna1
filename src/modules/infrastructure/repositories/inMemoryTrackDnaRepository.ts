@@ -1,6 +1,6 @@
-import type { TrackDNA } from '../../trackDna';
 import { deepClone } from '../deepClone';
-import type { TrackDnaRepository } from '../types';
+import type { TrackDnaRepository } from '../../persistence';
+import type { TrackDNA } from '../../trackDna';
 
 /** Each instance owns its own `Map`, keyed by `trackId` — no shared or global store (M9 Rule 8). Defensive copies on every operation (M9 Rule 7), same as the other two InMemory repositories. */
 export class InMemoryTrackDnaRepository implements TrackDnaRepository {

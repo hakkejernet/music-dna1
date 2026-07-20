@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { InMemoryUserDnaRepository } from '../../persistence';
+import { buildAppContext } from '../../infrastructure';
 import type { UserDnaRepository } from '../../persistence';
 import { validateSignalVector } from '../../trackDna';
 import type { UserDNA } from '../../userDna';
@@ -55,18 +55,21 @@ describe('LoadUserDna — dependency injection (M10 Rule 4/5)', () => {
   });
 });
 
-describe('LoadUserDna — repository swappability (M10 Rule 4)', () => {
-  it('behaves identically whether given a hand-rolled fake or the real InMemoryUserDnaRepository (M9)', async () => {
+describe('LoadUserDna — repository swappability (M10 Rule 4, M11 Rule 4/8)', () => {
+  it('behaves identically whether given a hand-rolled fake or the real repository the Composition Root wires (M11)', async () => {
     const userDna = buildUserDna('user-1');
 
-    const inMemoryRepository = new InMemoryUserDnaRepository();
-    await inMemoryRepository.save(userDna);
+    // The real implementation comes only from buildAppContext() — this
+    // test never names InMemoryUserDnaRepository directly, matching
+    // M11 Rule 4 ("Application Layer må aldrig kalde new InMemory...").
+    const { repositories } = buildAppContext();
+    await repositories.userDnaRepository.save(userDna);
 
     const fakeRepository = new FakeUserDnaRepository(userDna);
 
-    const resultFromInMemory = await new LoadUserDna(inMemoryRepository).execute('user-1');
+    const resultFromReal = await new LoadUserDna(repositories.userDnaRepository).execute('user-1');
     const resultFromFake = await new LoadUserDna(fakeRepository).execute('user-1');
 
-    expect(resultFromInMemory).toEqual(resultFromFake);
+    expect(resultFromReal).toEqual(resultFromFake);
   });
 });

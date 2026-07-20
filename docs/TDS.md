@@ -1157,6 +1157,73 @@ ADR-16, når/hvis den besluttes) — bevidst ikke løst her.
   bygget — er ansvarlig for selv at konstruere og injicere alle
   afhængigheder. Der findes ingen "nem" genvej, kun den eksplicitte vej.
 
+### ADR-26 — Composition Root er eneste sted hvor konkrete implementationer konstrueres
+
+- **Beslutning:** `buildAppContext()` (M11's Composition Root,
+  `src/modules/infrastructure/compositionRoot.ts`) er det ENESTE sted i
+  hele systemet der må skrive `new InMemory...` (eller enhver fremtidig
+  konkret repository-/adapter-klasse). Intet andet modul — domæne,
+  Application Layer, eller test — konstruerer en konkret
+  infrastruktur-klasse direkte.
+- **Baggrund:** ADR-25 gjorde det til en regel at Application Layer
+  aldrig konstruerer sine egne afhængigheder; denne ADR færdiggør
+  billedet fra den anden side — der skal findes ét, navngivet sted hvor
+  konstruktionen rent faktisk sker, ellers ville "aldrig i Application
+  Layer" bare betyde at konstruktionen dukkede tilfældigt op et andet
+  sted (en test, en fremtidig UI-fil) uden nogen samlet oversigt over
+  systemets fulde afhængighedsgraf.
+- **Alternativer overvejet:** (a) lad hver test eller hvert fremtidigt
+  indgangspunkt (UI, CLI, osv.) selv konstruere de repositories det har
+  brug for, lokalt; (b) flere, mindre composition roots, én pr. feature
+  eller pr. indgangspunkt.
+- **Hvorfor denne løsning:** Begge alternativer spreder konstruktions-
+  ansvaret ud over flere steder — nøjagtig den skjulte kobling M10
+  Rule 4/ADR-25 findes for at undgå, blot flyttet til et andet lag.
+  Ét, samlet Composition Root betyder at "hvilken konkret
+  implementation bruger systemet lige nu" kan besvares ved at læse én
+  fil, og at en fremtidig `IndexedDbUserDnaRepository` kun kræver en
+  ændring i denne ene fil, ikke en søgning gennem hele kodebasen.
+- **Konsekvenser:** M11's egen `architecture.test.ts` gør denne regel
+  til en automatisk verificeret invariant (jf. ADR-27) i stedet for en
+  konvention: enhver fremtidig `new InMemory...`/`new IndexedDb...` uden
+  for `infrastructure/` fejler testsuiten med det samme.
+
+### ADR-27 — Arkitekturregler verificeres automatisk via tests
+
+- **Beslutning:** Strukturelle arkitekturregler — grænser mellem lag,
+  forbudte imports, "kun ét sted konstruerer X" — udtrykkes hvor muligt
+  som en eksekverbar test, ikke kun som prosa i en Review Report eller
+  en engangs-`grep` udført under udvikling.
+- **Baggrund:** M1-M10s Review Reports dokumenterede den slags grænser
+  gennem manuel gennemlæsning og `grep`-verifikation på
+  commit-tidspunktet — sandt da det blev skrevet, men uden nogen
+  garanti at det forbliver sandt efter fremtidige ændringer.
+  `src/architecture.test.ts` (M11) gør præcis én af disse grænser
+  (ingen konkrete repository-imports uden for `infrastructure/`) til en
+  test der køres ved hver `npm run test` — en fremtidig regression
+  fanges med det samme, ikke ved den næste manuelle review.
+- **Alternativer overvejet:** (a) forblive ved manuel `grep`-verifikation
+  dokumenteret i Review Reports, som ved M1-M10; (b) et separat
+  lint-værktøj/plugin dedikeret til arkitektur-regler (fx
+  dependency-cruiser eller lignende), konfigureret uden for selve
+  testsuiten.
+- **Hvorfor denne løsning:** (a) beviste allerede sin svaghed — flere
+  af denne sessions "TDS-afklaringer" var netop nødvendige fordi en
+  antagelse fra en tidligere milestone ikke længere holdt, og intet
+  automatisk fangede det før næste manuelle review. (b) er en rimelig
+  fremtidig udvidelse, men introducerer en ny værktøjsafhængighed for
+  en enkelt regel, hvor en almindelig Vitest-test (samme testløber,
+  samme kommando, ingen ny afhængighed) er tilstrækkelig lige nu — den
+  simpleste korrekte implementation, ikke en poleret løsning.
+- **Konsekvenser:** Fremtidige arkitektoniske grænser (fx en tilsvarende
+  regel for et kommende lag) bør, hvor det er praktisk muligt, følge
+  samme mønster: en test der faktisk scanner kildekoden, ikke kun en
+  sætning i en Review Report. Ikke alle regler kan udtrykkes så
+  mekanisk (fx "Engine indeholder ingen domænelogik" er stadig bevist
+  ved output-sammenligning, ikke ved en syntaks-scanning) — denne ADR
+  gælder specifikt strukturelle im/eksport-grænser, ikke enhver
+  arkitekturregel.
+
 ---
 
 ## 11. Non-functional Requirements (NFR)

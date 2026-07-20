@@ -1,6 +1,6 @@
-import type { UserDNA } from '../../userDna';
 import { deepClone } from '../deepClone';
-import type { UserDnaRepository } from '../types';
+import type { UserDnaRepository } from '../../persistence';
+import type { UserDNA } from '../../userDna';
 
 /**
  * Each instance owns its own `Map` — no module-level shared store, no
