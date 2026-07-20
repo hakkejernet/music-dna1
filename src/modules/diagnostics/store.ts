@@ -1,7 +1,7 @@
 import type { LastFmDiagnostics, RecommendationDiagnostics, SpotifyDiagnostics } from './types';
 
 const emptyDiagnostics = (): RecommendationDiagnostics => ({
-  spotify: { loginOk: false, topArtistsFound: null, error: null },
+  spotify: { loginOk: false, topArtistsFound: null, seedArtistNames: [], error: null },
   lastfm: {
     apiKeyPresent: false,
     apiCallMade: false,
@@ -12,6 +12,7 @@ const emptyDiagnostics = (): RecommendationDiagnostics => ({
   },
   queue: null,
   fallbackReason: null,
+  topRecommendations: [],
 });
 
 let current: RecommendationDiagnostics = emptyDiagnostics();
@@ -33,5 +34,5 @@ export const updateLastFmDiagnostics = (patch: Partial<LastFmDiagnostics>): void
   current = { ...current, lastfm: { ...current.lastfm, ...patch } };
 };
 
-/** Snapshot of the most recent loadRecommendationQueue() run — read by the dev-only DebugPanel. */
+/** Snapshot of the most recent loadRecommendationQueue() run — read by the debug panel. */
 export const getRecommendationDiagnostics = (): RecommendationDiagnostics => current;

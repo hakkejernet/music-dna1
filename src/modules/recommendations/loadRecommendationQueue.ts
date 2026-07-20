@@ -82,11 +82,20 @@ export const loadRecommendationQueue = async (): Promise<RecommendationQueue<Ran
   const preferences = await buildPreferenceProfile();
   const ranked = ranker.rank({ recommendations: unseen, profile, preferences });
 
+  const queue = new RecommendationQueue<RankedRecommendation>(ranked);
   const usedMock = recommendations.length === 0;
   updateRecommendationDiagnostics({
-    queue: { count: ranked.length, source: usedMock ? 'mock' : 'lastfm' },
+    queue: {
+      beforeRanking: unseen.length,
+      afterRanking: ranked.length,
+      inQueue: queue.size,
+      source: usedMock ? 'mock' : 'lastfm',
+    },
     fallbackReason: usedMock ? determineFallbackReason() : null,
+    topRecommendations: ranked
+      .slice(0, 10)
+      .map((recommendation) => `${recommendation.track.name} — ${recommendation.track.artists.map((artist) => artist.name).join(', ')}`),
   });
 
-  return new RecommendationQueue<RankedRecommendation>(ranked);
+  return queue;
 };

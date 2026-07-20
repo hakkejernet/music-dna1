@@ -179,3 +179,10 @@ export const isAuthenticated = (): boolean => {
 };
 
 export const logout = (): void => clearTokens();
+
+/** Space-separated scopes actually granted to the current token, split into a list — null if not logged in. Never exposes the token itself; for the debug panel. */
+export const getGrantedScopes = (): string[] | null => {
+  const tokens = loadTokens();
+  if (!tokens) return null;
+  return tokens.scope.split(' ').filter(Boolean);
+};

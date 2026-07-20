@@ -1,5 +1,33 @@
 # Changelog
 
+## Debug-panel virker nu i production (iPhone-venligt)
+
+Debug-panelet var bundet til `import.meta.env.DEV`, så det var usynligt på
+den faktiske GitHub Pages-side — netop der hvor det er brug for, da der
+ikke er konsol-adgang på en iPhone. Aktivering er nu et URL-query-param i
+stedet for en build-tilstand.
+
+- `src/lib/debugMode.ts`: `isDebugModeEnabled()` tjekker `?debug=1` i
+  URL'en. Ingen tilstand, ingen localStorage — kun til stede når
+  query-parametret rent faktisk er i URL'en, så almindelige brugere aldrig
+  ser det. `DiscoveryPage` bruger nu dette i stedet for
+  `import.meta.env.DEV`.
+- Debug-panelet viser nu ALT vi indsamler: Spotify-login, **token scopes**
+  (nyt — `getGrantedScopes()` i `modules/spotify/auth.ts`, læser kun
+  scope-listen, aldrig selve tokenet), top artists fundet,
+  **seedArtistNames** (nyt, fulde liste), Last.fm API key fundet,
+  artist.getsimilar-kald, candidateArtists, topTracks, recommendations
+  bygget, samt kø-tal opdelt i tre separate trin: **før ranking**, **efter
+  ranking** og **i queue** (tidligere kun ét samlet "antal"-tal), og
+  fallback-årsag.
+- Nyt: **de første 10 recommendation-titler + kunstner**, taget direkte
+  fra den færdige, rangerede liste — så man kan se præcis hvad
+  recommendation-motoren producerede, ikke kun tællinger.
+- Verificeret: uden `?debug=1` er debug-knappen fuldstændig fraværende
+  fra DOM'en (ikke bare skjult med CSS); med `?debug=1` vises knappen og
+  panelet viser alle 13 påkrævede felter plus tracklisten korrekt udfyldt.
+  16/16 checks bestod. Ingen anden funktionalitet ændret.
+
 ## Root cause rettet: manglende `user-top-read`-scope
 
 Kodegennemgangen (uden konsol-adgang) fandt roden til "samme 5-6 sange":

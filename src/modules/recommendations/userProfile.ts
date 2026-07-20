@@ -20,11 +20,12 @@ const buildSpotifySeed = async (): Promise<SpotifySeed> => {
   try {
     const [user, topArtists] = await Promise.all([getCurrentUser(), getTopArtists(5)]);
     const seedArtists = topArtists.slice(0, MAX_SEED_ARTISTS);
-    updateSpotifyDiagnostics({ loginOk: true, topArtistsFound: topArtists.length, error: null });
+    const seedArtistNames = seedArtists.map((artist) => artist.name);
+    updateSpotifyDiagnostics({ loginOk: true, topArtistsFound: topArtists.length, seedArtistNames, error: null });
     return {
       userId: user.id,
       seedArtistIds: seedArtists.map((artist) => artist.id),
-      seedArtistNames: seedArtists.map((artist) => artist.name),
+      seedArtistNames,
       seedGenres: [...new Set(topArtists.flatMap((artist) => artist.genres))].slice(0, MAX_SEED_GENRES),
     };
   } catch (error) {
@@ -32,6 +33,7 @@ const buildSpotifySeed = async (): Promise<SpotifySeed> => {
     updateSpotifyDiagnostics({
       loginOk: false,
       topArtistsFound: null,
+      seedArtistNames: [],
       error: error instanceof Error ? error.message : String(error),
     });
     return { userId: '', seedArtistIds: [], seedArtistNames: [], seedGenres: [] };

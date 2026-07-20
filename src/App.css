@@ -805,3 +805,18 @@
   font-weight: 700;
   color: var(--text-h);
 }
+
+.debug-panel__empty {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.debug-panel__tracklist {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--text-h);
+}

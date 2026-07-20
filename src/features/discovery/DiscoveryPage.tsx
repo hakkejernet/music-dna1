@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
+import { isDebugModeEnabled } from '../../lib/debugMode';
 import { getRecommendationDiagnostics, type RecommendationDiagnostics } from '../../modules/diagnostics';
 import { getSavedCount, rejectRecommendation, saveRecommendation } from '../../modules/history';
 import type { RankedRecommendation } from '../../modules/ranking';
 import { getPrimaryGenre, loadRecommendationQueue, RecommendationQueue } from '../../modules/recommendations';
+import { getGrantedScopes } from '../../modules/spotify';
 import { getInstantSpotifyUrl, resolveSpotifyTrackUrl } from '../../modules/spotifyLink';
 import { useAuth } from '../auth/AuthContext';
 import { ActionBar } from './components/ActionBar';
@@ -98,15 +100,17 @@ export const DiscoveryPage = () => {
     finishAction('reject', queue.advance());
   };
 
-  // Dev-only diagnostics — stripped from the production build. Not a
-  // product feature, just visibility into why the recommendation pipeline
-  // produced what it did.
-  const debugOverlay = import.meta.env.DEV && diagnostics && (
+  // Debug diagnostics — not a product feature, just visibility into why the
+  // recommendation pipeline produced what it did. Activated via ?debug=1
+  // (see src/lib/debugMode.ts) so it also works on a deployed production
+  // build — never shown to a normal user, since that query param is never
+  // present unless someone deliberately adds it.
+  const debugOverlay = isDebugModeEnabled() && diagnostics && (
     <>
       <button type="button" className="debug-toggle" onClick={() => setDebugOpen(true)}>
         🐛 Debug
       </button>
-      <DebugPanel open={debugOpen} onClose={() => setDebugOpen(false)} diagnostics={diagnostics} />
+      <DebugPanel open={debugOpen} onClose={() => setDebugOpen(false)} diagnostics={diagnostics} scopes={getGrantedScopes()} />
     </>
   );
 

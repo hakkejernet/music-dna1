@@ -1,4 +1,4 @@
-export { buildAuthorizeUrl, getValidAccessToken, handleAuthCallback, isAuthenticated, logout } from './auth';
+export { buildAuthorizeUrl, getGrantedScopes, getValidAccessToken, handleAuthCallback, isAuthenticated, logout } from './auth';
 export {
   getArtistsByIds,
   getCurrentUser,
