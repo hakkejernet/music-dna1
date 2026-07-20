@@ -1027,6 +1027,74 @@ kun til den nuværende kode.
   fremtidig arkitekturbeslutning (en ny ADR), ikke noget der kan ske
   ved en tilfældig konfigurationsændring.
 
+### ADR-22 — Repository-kontrakten er stabil; implementeringen er udskiftelig
+
+- **Beslutning:** `Repository<T>` (og de tre navngivne kontrakter,
+  `UserDnaRepository`/`LearningEventRepository`/`TrackDnaRepository`)
+  er den ene, stabile grænseflade alt andet i systemet forholder sig
+  til. Hvilken konkret lagringsmekanisme der ligger bagved (in-memory
+  nu, IndexedDB senere, eventuelt en fjern-backend derefter) må ændre
+  sig frit, uden at kontraktens metodesignaturer ændres.
+- **Baggrund:** M9 byggede kun en in-memory-implementation (Rule 4),
+  men gjorde kontrakten selv async (frem for at matche in-memorys
+  egen synkrone natur) netop for at et fremtidigt, uundgåeligt
+  asynkront lag (IndexedDB) kan indsættes uden et brud. Uden denne ADR
+  ville "udskiftelighed" kun være en observation om M9s kode, ikke en
+  bindende grænse fremtidige milestones skal respektere.
+- **Alternativer overvejet:** (a) lad kontrakten være synkron nu (mere
+  bekvem for in-memory-brug) og acceptere et brud i alle kaldere når et
+  rigtigt lag tilføjes; (b) lad hver fremtidig backend definere sin
+  egen kontrakt, og lad kaldere vide hvilken implementation de taler
+  til.
+- **Hvorfor denne løsning:** Begge alternativer gør et fremtidigt
+  lagerskifte til en ændring der spreder sig til hver kalder — præcis
+  den kobling `Repository<T>` findes for at undgå. En stabil,
+  allerede-asynkron kontrakt betyder at `learningEngine` (eller et
+  fremtidigt orkestrerings-lag) aldrig behøver vide om det taler til
+  en `Map` eller en rigtig database.
+- **Konsekvenser:** En fremtidig `IndexedDbUserDnaRepository` (eller
+  lignende) skal implementere `UserDnaRepository` uændret — samme
+  metodenavne, samme parametre, samme returtyper. Ethvert behov for at
+  ændre selve kontrakten (fx et nyt metodenavn) er en ny, eksplicit
+  arkitekturbeslutning, ikke en bieffekt af at vælge en ny backend.
+
+### ADR-23 — Repositories returnerer altid defensive kopier, deler aldrig mutable referencer
+
+- **Beslutning:** Enhver `Repository<T>`-implementation skal både ved
+  `save()` og ved enhver læsning (`getById()`/`getAll()`) returnere
+  eller opbevare en kopi, aldrig den samme objekt-reference som
+  kalderen gav eller vil modtage. At mutere et objekt før eller efter
+  en repository-operation må aldrig kunne påvirke hverken det gemte
+  eller et andet allerede-returneret resultat.
+- **Baggrund:** M9 Rule 7 krævede defensive kopier "ved både save() og
+  load()" — denne ADR gør det til en permanent, navngivet egenskab ved
+  *enhver* fremtidig implementation af disse kontrakter, ikke kun
+  M9's egen `InMemory*`-familie.
+- **Alternativer overvejet:** (a) kun kopiere ved `save()` og betragte
+  returnerede objekter som "kalderens eget ansvar ikke at mutere"; (b)
+  dokumentere non-mutation som en konvention frem for at gennemtvinge
+  den med faktiske kopier.
+- **Hvorfor denne løsning:** Begge alternativer flytter risikoen for
+  et helt bestemt fejlmønster — et modul der (utilsigtet) muterer et
+  domæneobjekt det fik fra en repository, og derved korrumperer
+  systemets egen kilde til sandhed — tilbage til hver kalder, i stedet
+  for at gøre det strukturelt umuligt én gang, ét sted. Det er samme
+  filosofi som M4's `deepFreeze()` af `Candidate` og M6's frosne
+  kopi i `RecommendationQueue.create()`, nu gjort til en permanent
+  kontraktforpligtelse for hele persistence-laget.
+- **Konsekvenser:** En fremtidig `IndexedDbUserDnaRepository` skal
+  selv sikre samme egenskab (fx via sin egen deep-copy ved
+  serialisering til og fra det format den rent faktisk gemmer) — det
+  er ikke noget der kommer gratis fra at bruge en rigtig database, og
+  skal derfor eksplicit testes igen, ikke antages, når den bygges.
+
+**Note (ikke en beslutning, en status):** `LearningEvent` (M7) mangler
+stadig et bruger-scope (intet `userId`-felt) — `LearningEventRepository`
+kan derfor ikke i dag besvare "alle hændelser for denne bruger", kun
+"alle hændelser nogensinde gemt". Dette er korrekt identificeret i M9's
+Review Report som en fremtidig opgave (kræver en ADR mod M7, jf.
+ADR-16, når/hvis den besluttes) — bevidst ikke løst her.
+
 ---
 
 ## 11. Non-functional Requirements (NFR)

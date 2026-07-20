@@ -1491,19 +1491,37 @@ Ja. M9 (Fejlhåndtering: ingen mock-fallback) kan bygges videre på en
 
 ---
 
-## M9 — Fejlhåndtering: ingen mock-fallback
+## M9 — Persistence Layer
 
-**Type:** Teknisk evne med direkte brugervendt konsekvens (ærlige
+**Scope-note (afløser oprindelig beskrivelse nedenfor — større afvigelse
+end M3-M8's tilsvarende noter):** da M9 skulle påbegyndes, satte
+brugeren scopet til Persistence Layer — repository-kontrakter og en
+in-memory implementation. Dette er et **helt andet emne** end det
+oprindelige roadmaps M9 ("Fejlhåndtering: ingen mock-fallback", TDS
+afsnit 7's fem fejlscenarier), ikke bare en indskrænkning eller
+omfortolkning af det samme emne som ved M3-M8. Den oprindelige M9
+("Fejlhåndtering") er derfor **ikke udført** og forbliver en åben,
+uplanlagt opgave — bevaret som historik nedenfor, men afventer et
+fremtidigt milestone-nummer, ikke automatisk "M9.5" eller lignende. Ti
+bindende regler for det faktiske M9 (persistence ejer kun lagring og
+kender intet om Queue/Ranking/Providers/React/UI/Spotify, arbejder kun
+med domæneobjekter, repository-kontrakter uden konkrete databaser,
+kun en in-memory-implementation, alle repositories udskiftelige,
+deterministiske, ingen mutation — defensive kopier ved save/load, ingen
+caching/singleton/global tilstand, ingen serialisering/JSON/migrations
+endnu, ingen UI-integration) styrede det faktiske arbejde.
+
+**Type (oprindeligt):** Teknisk evne med direkte brugervendt konsekvens (ærlige
 fejltilstande i stedet for skjulte).
 
-**Formål:** Implementere de fem fejlscenarier fra TDS afsnit 7 (ingen
+**Formål (oprindeligt):** Implementere de fem fejlscenarier fra TDS afsnit 7 (ingen
 kandidater, provider-fejl, manglende metadata, tomt DNA, delvist
 enrichment) uden nogen produktions-mock, jf. ADR-07.
 
 **Afhængigheder:** M3+M4 (der skal være reelle fejlpunkter at håndtere
 — provider-kald og enrichment).
 
-**Omfang:**
+**Omfang (oprindeligt, ikke udført):**
 - En tydelig, ærlig tom-tilstand i `discovery` når ingen kandidater
   findes.
 - Diagnostik der viser *hvilken* årsag (samme princip som v1's
@@ -1512,7 +1530,7 @@ enrichment) uden nogen produktions-mock, jf. ADR-07.
 - Bekræftelse af at delvist enrichment og tomt DNA *ikke* udløser en
   fejltilstand (de er normale, jf. TDS).
 
-**Acceptkriterier:**
+**Acceptkriterier (oprindeligt, ikke udført):**
 - Simulerer alle providers nede → brugeren ser en tydelig, ærlig
   besked, ikke placeholder-indhold.
 - Simulerer én af flere providers nede → resten af flowet fungerer
@@ -1529,6 +1547,125 @@ ikke kun princippet.
 **Review-punkt:** er "ærlig tom-tilstand" reelt en acceptabel UX, eller
 opleves den som et nedbrud af en almindelig bruger, der ikke kan se
 diagnostikken?
+
+**Status:** ikke udført. Se scope-noten øverst i denne sektion — den
+faktiske M9 blev Persistence Layer. Fejlhåndtering (TDS afsnit 7) er en
+åben, uplanlagt opgave.
+
+### Review Report — M9 (Persistence Layer, det faktiske scope)
+
+**Hvad blev bygget?**
+`src/modules/persistence/`:
+- `types.ts` — generisk `Repository<T>` (`save`/`getById`/`getAll`,
+  alle async), samt tre navngivne kontrakter som simple type-aliases:
+  `UserDnaRepository` (keyed by `userId`), `LearningEventRepository`
+  (keyed by `eventId`), `TrackDnaRepository` (keyed by `trackId`). Intet
+  sted i filen nævnes IndexedDB, LocalStorage, eller nogen anden konkret
+  database (Rule 3).
+- `deepClone.ts` — `deepClone()`: den defensive kopi-mekanisme (Rule 7),
+  bruger en JSON-rundtur internt som en ren kopieringsteknik — se
+  afklaring nedenfor for hvorfor det ikke er den "serialisering" Rule 9
+  udskyder.
+- `inMemory/` — tre klasser (`InMemoryUserDnaRepository`,
+  `InMemoryLearningEventRepository`, `InMemoryTrackDnaRepository`),
+  hver med sin egen private `Map`-instans (Rule 8: ingen delt/global
+  tilstand), hver metode kloner defensivt både ved `save()` og ved
+  enhver læsning (Rule 7).
+- `inMemoryRepositories.test.ts` — én delt kontrakt-testsuite
+  (`runRepositoryContractTests`) køres identisk mod alle tre
+  implementationer, uændret pr. type — selve beviset for udskiftelighed
+  (Rule 5): samme testlogik, tre forskellige konkrete klasser.
+- `learningEngineIntegration.test.ts` — demonstrerer load → learn →
+  save-komposition med M8's `learn()`, uden at røre `learningEngine/`s
+  kildekode.
+- `deepClone.test.ts` — isolerede tests af selve kloningshjælperen.
+
+**Type-afgrænsning, gjort eksplicit (ingen ADR nødvendig — intet fra
+M1-M8 er ændret):**
+- `TrackDnaRepository` er inkluderet, selvom Rule 2 kun kræver det
+  "hvis nødvendigt": samme generiske mønster som de to andre, ingen
+  ekstra designbeslutning, og det runder Rule 2's egen liste af
+  domæneobjekter (`UserDNA`, `LearningEvent`, `TrackDNA`) fuldt ud.
+- `LearningEventRepository` kan ikke scope'es pr. bruger — `LearningEvent`
+  (M7) bærer intet `userId`-felt. `getAll()` returnerer derfor *alle*
+  gemte hændelser, uden filtrering. At tilføje bruger-scoping kræver at
+  ændre `LearningEvent`s skema (en M7-ændring, ny ADR under ADR-16) —
+  ikke gjort her, kun gjort synligt som endnu et scope-hul i samme
+  mønster som M3/M11 og M7's egne åbne punkter.
+- Alle metoder er `async`/returnerer `Promise`, selvom denne milestones
+  egen in-memory-implementation kunne løses synkront. Et fremtidigt,
+  rigtigt IndexedDB-lag er uundgåeligt asynkront; at gøre kontrakten
+  async nu er hvad der lader Rule 5's udskiftelighed holde uden et
+  brud, når det lag bygges.
+
+**Serialiserings-afklaring, gjort eksplicit:** `deepClone()` bruger
+`JSON.stringify`/`.parse` internt, men producerer eller opbevarer aldrig
+en JSON-*streng* nogen steder — hver `Map` gemmer rigtige JS-objekter,
+ikke serialiseret tekst. Dette er en intern kopieringsteknik for Rule
+7's defensive-kopi-krav, ikke det persistering-*format* Rule 9 udskyder
+("ingen serialisering endnu, ingen JSON-format som lagerformat"). Alle
+nuværende domæneobjekter (`UserDNA`, `TrackDNA`, `LearningEvent`) er ren,
+JSON-sikker data uden funktioner eller cirkulære referencer, hvilket gør
+denne teknik sikker.
+
+**Hvilke tests blev kørt?**
+`npm run test` → 151/151 grønne (121 fra M1-M8 + 30 nye). `npx tsc -b`,
+`npm run lint`, `npm run build` alle grønne og uændrede for al
+eksisterende kode.
+
+**Bevis for defensive kopier:** mutation af den originale genstand
+*efter* `save()` påvirker ikke den gemte kopi; mutation af en genstand
+returneret fra `getById()`/`getAll()` påvirker ikke en efterfølgende
+læsning — testet for alle tre repository-typer via den delte
+kontrakt-suite.
+
+**Bevis for immutability:** samme tests som ovenfor beviser det direkte
+— repositoryet holder aldrig en reference der kan ses eller ændres
+udefra.
+
+**Bevis for determinisme:** gentagne `getById()`-kald uden mellemliggende
+skrivninger giver `toEqual`-identiske resultater hver gang.
+
+**Bevis for udskiftelige repositories:** `runRepositoryContractTests()`
+er skrevet én gang og køres uændret mod alle tre konkrete klasser —
+ingen type-specifik branch-logik i selve testsuiten.
+
+**Bevis for at ingen browser-API anvendes:** `grep` for
+`indexedDB`/`localStorage`/`sessionStorage`/`window.`/`document.`/
+`fetch(` i `src/modules/persistence/` gav nul resultater.
+
+**Bevis for at Learning Engine ikke kender implementeringen:** `grep`
+for `persistence` i `src/modules/learningEngine/` gav nul resultater;
+`learningEngineIntegration.test.ts` beviser at komposition (load → learn
+→ save) fungerer fuldt ud gennem repository-interfacet uden at ændre en
+linje i `learningEngine/`s kildekode.
+
+**Er milestone 100% færdig ifølge Definition of Done?**
+1. Acceptkriterier (de nye, brugerdefinerede regler) opfyldt — ja, se
+   bevisafsnittene ovenfor. 2. Tests består — ja, 151/151. 3. Ingen
+   TODO/placeholder — ja. 4. Dokumentation opdateret — ja, denne Review
+   Report plus inline-kommentarer i koden. 5. Fungerer isoleret uden
+   fremtidige milestones — ja, intet import af `queue`, `rankingEngine`,
+   `candidateProviders`, `enrichment`, React, eller `spotify` noget sted
+   i `persistence/`; kun type-imports fra `feedbackPipeline`, `trackDna`,
+   `userDna` (de erklærede domæneobjekter). 6. Ingen kendte kritiske
+   fejl — ja. 7. Reviewet mod PRD/TDS/ADR — ja: type- og
+   serialiserings-afgrænsningerne ovenfor er begge afgrænsninger, ikke
+   ændringer, af tidligere milestones; ADR-16 til ADR-21 er alle
+   respekteret (intet fra M1-M8 er ændret). 8. Demonstrerer den
+   tilsigtede værdi — ja: beviset er ikke om data ligger i IndexedDB
+   (det gør det ikke, med vilje), men at resten af systemet (her:
+   `learningEngine`) kan gemme og hente domæneobjekter gennem et
+   interface alene, uden at kende lagringsmekanismen.
+
+**Ja — M9 er 100% færdig ifølge Definition of Done (for det scope
+brugeren faktisk satte).**
+
+**Er projektet klar til næste milestone?**
+Ja, med to åbne punkter at være bevidst om: (a) den oprindelige M9
+("Fejlhåndtering: ingen mock-fallback") er stadig ikke bygget, og (b)
+en rigtig IndexedDB-implementation af de tre repository-kontrakter er
+en fremtidig opgave denne milestone bevidst ikke rørte (Rule 4).
 
 ---
 
