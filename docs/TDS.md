@@ -751,6 +751,33 @@ kun til den nuværende kode.
   `FeedbackEvent`-loggen (den vigtigste data) er upåvirket af dette
   (jf. ADR-04), kun de afledte aggregater kan blive forsinket.
 
+### ADR-14 — Candidate Aggregator er bevidst mekanisk
+
+- **Beslutning:** `CandidateAggregator` må kun aggregere, deduplikere,
+  bevare metadata, og isolere fejl. Den må aldrig rangere, prioritere
+  providers, filtrere kandidater, eller træffe recommendation-
+  beslutninger.
+- **Baggrund:** M3 gjorde `CandidateAggregator` til den eneste kode der
+  kender til mere end én `CandidateProvider` (ADR-02, ADR-11) — netop
+  fordi den sidder centralt, er den det oplagte sted en beslutning om
+  "hvilken kandidat er bedst" ville sive ind, hvis grænsen ikke var
+  gjort eksplicit.
+- **Alternativer overvejet:** (a) lad aggregatoren vægte providers efter
+  historisk kvalitet ved dedup (fx foretræk Last.fm's metadata over en
+  ny, uprøvet kildes, hvis de er i konflikt); (b) lad aggregatoren
+  droppe kandidater under en vis providertillid.
+- **Hvorfor denne løsning:** Begge alternativer er en rangerings- eller
+  filtrerings-beslutning i forklædning — de hører til `ranking`
+  (TDS §2, som *har* adgang til `UserDNA` og providerkvalitet via
+  `analytics`), ikke til `candidate-providers`, som TDS §2 allerede
+  forbyder at "score eller rangere noget". At holde aggregatoren
+  mekanisk er det der lader `ranking` forblive det ene sted en
+  kvalitets- eller relevans-afgørelse tages.
+- **Konsekvenser:** Ved dedup bevares *alle* konkurrerende
+  contributions uændret (M3 Rule 6) — aggregatoren tager ikke stilling
+  til hvilken der er "rigtigst". Al vægtning af providerkvalitet sker
+  nedstrøms, i `ranking`, aldrig her.
+
 ---
 
 ## 11. Non-functional Requirements (NFR)

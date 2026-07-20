@@ -409,23 +409,34 @@ og kan påbegyndes uafhængigt, jf. afhængighedsoversigten.
 
 ---
 
-## M3 — Én Candidate Provider, generaliseret
+## M3 — Candidate Provider-abstraktionen
+
+**Scope-note (afløser oprindelig beskrivelse nedenfor):** da M3 skulle
+påbegyndes, indskærpede brugeren scopet eksplicit: succes måles IKKE på
+om ægte musik kan hentes, men på om arkitekturen kan udvides uden
+omskrivninger — bevist med deterministiske test-providers, ingen
+internetadgang, ingen rigtig Last.fm-genskrivning. Det trak samtidig
+`CandidateAggregator` + deduplikering + fejlisolering (oprindeligt
+planlagt til M11, se dér) frem i denne milestone. Den oprindelige
+"Formål/Omfang/Acceptkriterier"-tekst nedenfor er bevaret som historik,
+men er **erstattet** af det faktisk udførte arbejde, dokumenteret i
+Review Report'en under den.
 
 **Type:** Teknisk evne (adfærd for brugeren uændret i dette skridt).
 
-**Formål:** Refaktorere v1's `LastFmRecommendationProvider` til det
-generelle `candidate-providers`-interface (TDS afsnit 2) — leverer
-`Candidate[]`, aldrig en score.
+**Formål (oprindeligt):** Refaktorere v1's `LastFmRecommendationProvider`
+til det generelle `candidate-providers`-interface (TDS afsnit 2) —
+leverer `Candidate[]`, aldrig en score.
 
 **Afhængigheder:** Ingen (kan bygges parallelt med M1/M2).
 
-**Omfang:**
+**Omfang (oprindeligt):**
 - Last.fm-integrationen genbruges uændret på API-niveau; kun formen af
   det den *returnerer* ændres (rå kandidat, ikke en færdig
   anbefaling).
 - `ProviderMetadata` (TDS afsnit 3) oprettes for denne ene kilde.
 
-**Acceptkriterier:**
+**Acceptkriterier (oprindeligt):**
 - Samme Last.fm-kald som i dag, men output er nu `Candidate[]` uden
   score/rangering.
 - En fejlende Last.fm-kilde påvirker ikke noget andet modul (der er
@@ -440,6 +451,111 @@ af `track-dna` eller ranking).
 **Review-punkt:** er `Candidate`-formen generel nok til at en helt
 anderledes kilde (fx en AI-provider) også kunne levere den, uden at
 skemaet skal ændres igen ved næste provider (M11)?
+
+### Review Report — M3
+
+**Hvad blev bygget?**
+`src/modules/candidateProviders/`:
+- `types.ts` — `CandidateProvider` (rent interface: `providerName` +
+  `fetchCandidates(request)`), `Candidate` (med `contributions:
+  CandidateContribution[]`, se TDS-afklaring nedenfor), `CandidateRequest`,
+  `ProviderMetadata` (kun `providerName`/`lastSuccessAt`/`lastFailureAt` —
+  se afgrænsning nedenfor).
+- `candidateAggregator.ts` — `CandidateAggregator`, den eneste klasse der
+  kender til mere end én provider. `fetchAll(request, now)` bruger
+  `Promise.allSettled` (fejlisolering), en accent-/tegnsætnings-uafhængig
+  normaliseret titel+første-kunstner som dedup-nøgle, og slår sammen ved
+  at konkatenere `contributions` (aldrig kassere den ene providers
+  metadata for at beholde den anden). `now` er et eksplicit parameter —
+  samme determinisme-mønster som `buildColdStartUserDna` (M2).
+- `candidateAggregator.test.ts` — 12 tests med to deterministiske
+  in-memory test-doubles (`FixedListProvider`, `FailingProvider`), ingen
+  `fetch`, intet netværkskald noget sted.
+
+**TDS-afklaring, gjort eksplicit (ikke en konflikt):** TDS §3's
+`Candidate`-model beskriver `rawMetadata` som "bevares pr. bidrag, ikke
+kun det først sete" i prosa, men modellerer det som et fladt felt.
+`contributions: CandidateContribution[]` er den strukturelle formalisering
+af præcis den sætning — hver contribution bærer sin egen
+`providerName`/`externalIds`/`rawMetadata`. Ingen ændring af TDS'
+`ProviderMetadata`-tabel var nødvendig for selve dedup-logikken.
+
+**Afgrænsning af `ProviderMetadata`, gjort eksplicit:** TDS §3 lister også
+`capabilities` og `qualityScore` på `ProviderMetadata`. Begge er udeladt
+her: `capabilities` er enrichments (M4) viden om hvad en kilde plausibelt
+kan bidrage til, `qualityScore` beregnes af `analytics` (M10) fra
+feedback-udfald. At tilføje dem nu ville være at gætte en form før de
+moduler, der reelt ejer den viden, findes. Kun `lastSuccessAt`/
+`lastFailureAt` — det M3's egen fejlisoleringslogik faktisk producerer —
+er med.
+
+**Scope-hul, gjort synligt (ikke stille besluttet):** ingen kode i denne
+milestone rører v1's `LastFmRecommendationProvider` eller wirer den til
+det nye interface — det var oprindeligt M3's opgave, men brugerens
+opdaterede instruktion for M3 udelukkede eksplicit rigtige API-kald.
+Der er derfor nu intet planlagt skridt, der gør Last.fm til en rigtig
+`CandidateProvider`. Forslag (ikke besluttet her): lad M11 dække *begge*
+opgaver — omskriv Last.fm til det nye interface, tilføj én ny kilde, og
+brug den allerede-beviste `CandidateAggregator` til at aggregere dem. Se
+opdateret M11-sektion nedenfor for det konkrete forslag; det afventer
+brugerens godkendelse ligesom alt andet.
+
+**Hvilke tests blev kørt?**
+`npm run test` — 12 nye tests (plus M1's 14 + M2's 11, 37 i alt, alle
+grønne). `npx tsc -b`, `npm run lint`, `npm run build` alle grønne og
+uændrede for al tidligere kode.
+
+**Bevis for udvidbarhed (M3 Rule: "kan arkitekturen udvides uden
+omskrivninger"):**
+| Test | Resultat |
+|---|---|
+| Én provider virker uden kendskab til nogen anden | ✅ |
+| Tilføjelse af en ny, ubeslægtet provider ændrer ikke den førstes egne kandidater | ✅ |
+| Fjernelse af en provider fjerner kun dens egne kandidater | ✅ |
+
+**Bevis for fejlisolering (Rule 5):**
+| Test | Resultat |
+|---|---|
+| Én fejlende provider stopper ikke de andres resultater | ✅ |
+| Den fejlende providers egen `ProviderMetadata` viser fejlen; den raske providers metadata er upåvirket | ✅ |
+| Alle providers fejler samtidig → intet throw, tomt resultat | ✅ |
+
+**Bevis for metadata-bevaring ved deduplikering (Rule 6):**
+| Test | Resultat |
+|---|---|
+| To providers' bud på "samme sang" flettes til én `Candidate` med begge `contributions` intakte | ✅ |
+| Accent/casing/tegnsætning behandles som samme spor til matching | ✅ |
+| Tre-vejs overlap bevarer alle tre bidrag | ✅ |
+| Reelt forskellige sange (selv fra samme provider) flettes ikke | ✅ |
+
+**Bevis for testbarhed uden internet:** alle 12 tests bruger kun
+in-memory klasser (`FixedListProvider`, `FailingProvider`); ingen import
+af `fetch`, `modules/lastfm`, eller `modules/spotify` noget sted i
+`candidateProviders/`.
+
+**Er milestone 100% færdig ifølge Definition of Done?**
+1. Acceptkriterier (de nye, brugerdefinerede regler) opfyldt — ja, se
+   bevistabellerne ovenfor. 2. Tests består — ja, 37/37. 3. Ingen
+   TODO/placeholder — ja. 4. Dokumentation opdateret — ja, denne Review
+   Report plus inline-kommentarer i koden. 5. Fungerer isoleret uden
+   fremtidige milestones — ja, intet import af `enrichment`, `ranking`,
+   `userDna`, `feedback`, `queue`, `discovery`, UI, eller `analytics`
+   noget sted i `candidateProviders/`. 6. Ingen kendte kritiske fejl —
+   ja. 7. Reviewet mod PRD/TDS/ADR — ja, se TDS-afklaringen og
+   `ProviderMetadata`-afgrænsningen ovenfor; begge er formaliseringer af
+   eksisterende TDS-prosa, ikke ændringer af den. 8. Demonstrerer den
+   tilsigtede værdi — ja: beviset er ikke at musik kan hentes, men at
+   `CandidateAggregator` er den eneste kode der kender til flere
+   providers, og at ingen af de tre bindende egenskaber (udvidbarhed,
+   fejlisolering, metadata-bevaring) kræver at røre en providers egen kode.
+
+**Ja — M3 er 100% færdig ifølge Definition of Done (for det scope
+brugeren faktisk satte).**
+
+**Er projektet klar til næste milestone?**
+Ja, med én åben beslutning at træffe først: hvor det udskudte arbejde
+("gør Last.fm til en rigtig `CandidateProvider`") skal placeres — se
+scope-hul-noten ovenfor og forslaget til M11 nedenfor.
 
 ---
 
@@ -713,43 +829,61 @@ der ville gøre det meningsfuldt?
 
 ---
 
-## M11 — Anden Candidate Provider (bevis på pluggability)
+## M11 — To rigtige Candidate Providers (bevis på pluggability)
+
+**Scope-note tilføjet efter M3 (afventer godkendelse, ikke selvstændigt
+besluttet):** M3's bruger-instruktion udelukkede rigtige API-kald, så
+`CandidateAggregator` + deduplikering + fejlisolering blev allerede
+bygget og testet der — med deterministiske test-providers, ikke rigtig
+Last.fm-data. Det betyder v1's `LastFmRecommendationProvider` er
+*stadig* ikke omskrevet til det nye `CandidateProvider`-interface. Denne
+milestone dækker derfor nu **to** opgaver i stedet for én: (1) omskriv
+Last.fm til det nye interface (M3's oprindelige formål), og (2) tilslut
+én ny kilde samtidig (denne milestones oprindelige formål). Begge bruger
+den allerede-beviste `CandidateAggregator` uændret — det er selve
+pointen: aggregatoren blev bevist generel nok i M3 uden at kende til en
+eneste rigtig kilde, og skal nu bare modtage to rigtige.
 
 **Type:** Teknisk evne, med direkte strategisk værdi (beviser PRD Fase
 2's centrale påstand).
 
-**Formål:** Tilslutte en anden kilde (ListenBrainz eller MusicBrainz —
-TDS Open Question 4 afgøres konkret her) samtidig med Last.fm, med
-kandidat-aggregering/deduplikering.
+**Formål:** Tilslutte Last.fm (genskrevet til det generelle interface)
+og én ny kilde (ListenBrainz eller MusicBrainz — TDS Open Question 4
+afgøres konkret her) samtidig, gennem den eksisterende
+`CandidateAggregator`.
 
-**Afhængigheder:** M3 (provider-interfacet skal være stabilt), M9
-(fejlhåndtering skal allerede understøtte flere samtidige providers).
+**Afhængigheder:** M3 (provider-interfacet og aggregatoren skal være
+stabile — er de, jf. M3's Review Report), M9 (fejlhåndtering skal
+allerede understøtte flere samtidige providers).
 
 **Omfang:**
-- Én ny `CandidateProvider`-implementation.
-- Aggregerings-/deduplikeringslogik når to kilder returnerer den
-  samme sang.
+- Last.fm-integrationen (uændret på API-niveau) pakket i en
+  `CandidateProvider`-implementation.
+- Én ny `CandidateProvider`-implementation for den anden kilde.
 - `ProviderMetadata` for begge kilder, klar til at blive brugt af
   `analytics` (feedback-loopet til provider-kvalitet er dog selv
   uden for denne milestones omfang — det er en Fase 3-opgave).
+- Ingen ny aggregerings-/deduplikeringslogik — den findes allerede i
+  `CandidateAggregator` fra M3 og genbruges uændret.
 
 **Acceptkriterier:**
-- Begge providers kaldes samtidigt; en fejl i én påvirker ikke den
-  anden (allerede sikret af M9, bekræftes igen her med to reelle
-  kilder).
+- Begge providers kaldes samtidigt via `CandidateAggregator`; en fejl i
+  én påvirker ikke den anden (allerede bevist i M3 med test-doubles,
+  bekræftes nu med to reelle kilder).
 - En sang der findes hos begge kilder optræder kun én gang i den
   endelige pulje, med metadata fra begge bevaret (ikke kun den først
-  sete).
+  sete) — samme dedup-logik som M3, nu med rigtig data.
 - `ranking` og alt nedstrøms fungerer identisk uden ændringer — det
   er selve beviset på at abstraktionen holder (ingen kode uden for
-  `candidate-providers` ændres for at tilføje denne kilde).
+  `candidate-providers` ændres for at tilføje disse kilder).
 
 **Testes isoleret ved:** mockede svar fra begge kilder, inklusive et
-overlap-scenarie, verificér korrekt deduplikering.
+overlap-scenarie, verificér korrekt deduplikering — samme mock-tilgang
+v1 allerede har brugt for Last.fm.
 
-**Review-punkt:** krævede tilslutningen af den nye kilde reelt *ingen*
-ændringer uden for `candidate-providers`? Hvis den gjorde, er det et
-signal om at abstraktionen (TDS ADR-02) ikke var stram nok, og skal
+**Review-punkt:** krævede tilslutningen af de to kilder reelt *ingen*
+ændringer i `candidateAggregator.ts` selv? Hvis den gjorde, er det et
+signal om at M3's abstraktion (TDS ADR-02) ikke var stram nok, og skal
 rettes før flere providers tilføjes.
 
 ---
