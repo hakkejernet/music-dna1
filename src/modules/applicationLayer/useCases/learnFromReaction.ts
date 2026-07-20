@@ -2,6 +2,7 @@ import type { RepositoryFailure, UserDnaNotFound } from '../../domainErrors';
 import { userDnaNotFound } from '../../domainErrors';
 import type { LearningEvent } from '../../feedbackPipeline';
 import { learn, type LearningStrategy } from '../../learningEngine';
+import type { ObservationSink } from '../../observability';
 import type { LearningEventRepository, TrackDnaRepository, UserDnaRepository } from '../../persistence';
 import { success, type Result } from '../../result';
 import type { UserDNA } from '../../userDna';
@@ -25,23 +26,35 @@ import type { UserDNA } from '../../userDna';
  * moment it fails (Rule 4) — no logging, no retry, no recovery, no
  * fallback (Rule 6): a missing `UserDNA` becomes `Failure(UserDnaNotFound)`,
  * never a silently-fabricated default profile.
+ *
+ * M14: this is the one Application Service in the system that
+ * integrates with `ObservationSink` (M14 Rule 1) — it is the only use
+ * case that already knows, at the moment it succeeds, both which
+ * reaction happened and whether learning actually changed anything.
+ * Observations are recorded only after every domain step has already
+ * succeeded (Rule 4), and only best-effort (Rule 5/ADR-32): a failure
+ * recording an observation is caught and discarded, never allowed to
+ * change this method's own `Result`.
  */
 export class LearnFromReaction {
   private readonly userDnaRepository: UserDnaRepository;
   private readonly trackDnaRepository: TrackDnaRepository;
   private readonly learningEventRepository: LearningEventRepository;
   private readonly strategies: readonly LearningStrategy[];
+  private readonly observationSink: ObservationSink;
 
   constructor(
     userDnaRepository: UserDnaRepository,
     trackDnaRepository: TrackDnaRepository,
     learningEventRepository: LearningEventRepository,
     strategies: readonly LearningStrategy[],
+    observationSink: ObservationSink,
   ) {
     this.userDnaRepository = userDnaRepository;
     this.trackDnaRepository = trackDnaRepository;
     this.learningEventRepository = learningEventRepository;
     this.strategies = strategies;
+    this.observationSink = observationSink;
   }
 
   /**
@@ -82,6 +95,50 @@ export class LearnFromReaction {
     const saveEventResult = await this.learningEventRepository.save(learningEvent);
     if (!saveEventResult.success) return saveEventResult;
 
+    // Everything the use case itself needed to do has already
+    // succeeded — only now, after the fact, does it describe what
+    // happened to Observability (M14 Rule 4). `changed` mirrors
+    // learningEngine's own no-op detection (M8): version only
+    // increments when a signal actually moved, so this needs no new
+    // knowledge learn() doesn't already expose.
+    this.recordObservations(userId, learningEvent, userDna.version !== updatedUserDna.version);
+
     return success(updatedUserDna);
+  }
+
+  /** Best-effort, by construction (M14 Rule 5/ADR-32): each call is isolated so a failure recording one observation can never suppress the other, and no failure here can ever reach `execute()`'s own return value. */
+  private recordObservations(userId: string, learningEvent: LearningEvent, changed: boolean): void {
+    const now = new Date(learningEvent.recordedAt);
+    const candidateRef = learningEvent.candidateRef;
+    const trackDnaRef = learningEvent.trackDnaRef;
+
+    this.recordSafely(() => {
+      switch (learningEvent.reactionType) {
+        case 'save':
+          this.observationSink.recordRecommendationAccepted({ candidateRef, trackDnaRef }, now);
+          break;
+        case 'reject':
+          this.observationSink.recordRecommendationRejected({ candidateRef, trackDnaRef }, now);
+          break;
+        case 'known':
+          this.observationSink.recordRecommendationKnown({ candidateRef, trackDnaRef }, now);
+          break;
+      }
+    });
+
+    this.recordSafely(() => {
+      this.observationSink.recordLearningApplied({ userId, eventId: learningEvent.eventId, changed }, now);
+    });
+  }
+
+  private recordSafely(action: () => void): void {
+    try {
+      action();
+    } catch {
+      // Observability is best effort (M14 Rule 5, ADR-32) — a failure
+      // here describes nothing about whether the use case itself
+      // succeeded, so it is deliberately discarded, never rethrown,
+      // never turned into part of this method's Result.
+    }
   }
 }

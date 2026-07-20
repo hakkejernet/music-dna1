@@ -78,30 +78,47 @@ describe('architecture boundary — concrete repositories stay inside infrastruc
 });
 
 const OBSERVABILITY_DIR = join('modules', 'observability');
+const APPLICATION_LAYER_DIR = join('modules', 'applicationLayer');
 
 /**
- * M13 Rule 6 ("Ingen modul uden for Observability må kende konkrete
- * metrikimplementeringer" / "Learning Engine må aldrig kende
- * Observability") verified in both directions, statically: nothing
- * outside `observability/` imports from it (it isn't wired into any
- * other module yet — see Review Report), and `observability/` itself
- * never reaches outside its own directory for anything. The second
- * check is stronger than "doesn't import the domain" — Observability's
- * own `Observation` types are deliberately self-contained primitives
- * (M13 design note in `types.ts`), so it needs literally nothing from
- * any sibling module, not even a type.
+ * M13 established Observability with zero coupling in either
+ * direction. M14 Rule 1 deliberately narrows that: Application Layer
+ * now integrates with `ObservationSink`, and Infrastructure's
+ * Composition Root must construct and wire the concrete
+ * `InMemoryObservationSink` — both are legitimate, explicitly-required
+ * exceptions to the original "nothing imports observability" rule.
+ * Everything else (`learningEngine`, `rankingEngine`, `queue`,
+ * `candidateProviders`, `enrichment`, `persistence`, `trackDna`,
+ * `userDna`, `feedbackPipeline`, `result`, `domainErrors`) must still
+ * know nothing about it.
  */
-describe('architecture boundary — Observability has zero coupling with the rest of the domain (M13 Rule 1/6)', () => {
-  it('no file outside src/modules/observability imports anything from it', () => {
+describe('architecture boundary — Observability integration is confined to Application Layer + Infrastructure wiring (M13 Rule 1/6, M14 Rule 1)', () => {
+  it('no file outside applicationLayer/, infrastructure/, or observability/ itself imports anything from observability', () => {
     const violations: string[] = [];
 
     for (const file of listTypeScriptFiles(SRC_DIR)) {
       const relativePath = relative(SRC_DIR, file);
-      if (relativePath.startsWith(OBSERVABILITY_DIR)) continue;
+      if (relativePath.startsWith(OBSERVABILITY_DIR) || relativePath.startsWith(APPLICATION_LAYER_DIR) || relativePath.startsWith(INFRASTRUCTURE_DIR)) {
+        continue;
+      }
 
       const content = readFileSync(file, 'utf-8');
       if (/from\s+['"][^'"]*observability[^'"]*['"]/.test(content)) {
         violations.push(`${relativePath} imports from observability`);
+      }
+    }
+
+    expect(violations).toEqual([]);
+  });
+
+  it('only Application Layer references the ObservationSink interface — Infrastructure wires only the concrete InMemoryObservationSink (M14 Rule 1)', () => {
+    const violations: string[] = [];
+    const observationSinkInterfacePattern = /import\s*(type\s*)?\{[^}]*\bObservationSink\b[^}]*\}\s*from/s;
+
+    for (const file of listTypeScriptFiles(join(SRC_DIR, INFRASTRUCTURE_DIR))) {
+      const content = readFileSync(file, 'utf-8');
+      if (observationSinkInterfacePattern.test(content)) {
+        violations.push(`${relative(SRC_DIR, file)} imports the ObservationSink interface — only Application Layer may know that contract`);
       }
     }
 

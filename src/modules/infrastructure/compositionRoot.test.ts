@@ -68,11 +68,46 @@ describe('buildAppContext — no singleton, fresh graph every call (M11 Rule 5)'
 });
 
 describe('AppContext — describes dependencies only, not runtime state (M11 Rule 6)', () => {
-  it('has exactly the two wiring groups (repositories, useCases) and nothing else', () => {
+  it('has exactly the two wiring groups plus the M14 observationSink, and nothing else', () => {
     const appContext = buildAppContext();
-    expect(Object.keys(appContext).sort()).toEqual(['repositories', 'useCases']);
+    // M14 adds `observationSink` alongside the two M11 wiring groups — it
+    // is itself only a wired dependency (the concrete InMemoryObservationSink),
+    // not runtime state, so it belongs here under the same M11 Rule 6.
+    expect(Object.keys(appContext).sort()).toEqual(['observationSink', 'repositories', 'useCases']);
     expect(Object.keys(appContext.repositories).sort()).toEqual(['learningEventRepository', 'trackDnaRepository', 'userDnaRepository']);
     expect(Object.keys(appContext.useCases).sort()).toEqual(['learnFromReaction', 'loadUserDna', 'persistLearningEvent', 'saveUserDna']);
+  });
+
+  it('wires the same InMemoryObservationSink instance into both AppContext.observationSink and LearnFromReaction (M14)', async () => {
+    const appContext = buildAppContext();
+    const userDna: UserDNA = {
+      userId: 'user-1',
+      signals: validateSignalVector({}),
+      coldStart: true,
+      sourceLibrarySnapshotRef: null,
+      version: 1,
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+    const trackDna: TrackDNA = {
+      trackId: 'track-1',
+      signals: validateSignalVector({}),
+      sourceCandidateRef: 'candidate-1',
+      enrichmentCompleteness: 1,
+    };
+    await appContext.repositories.userDnaRepository.save(userDna);
+    await appContext.repositories.trackDnaRepository.save(trackDna);
+
+    const learningEvent: LearningEvent = {
+      eventId: 'evt-1',
+      candidateRef: 'candidate-1',
+      trackDnaRef: 'track-1',
+      reactionType: 'save',
+      recordedAt: '2026-01-01T00:00:00.000Z',
+    };
+    await appContext.useCases.learnFromReaction.execute('user-1', learningEvent);
+
+    // Only observable through the *same* sink instance if it's truly shared, not a second, disconnected one.
+    expect(appContext.observationSink.getAll().length).toBeGreaterThan(0);
   });
 });
 

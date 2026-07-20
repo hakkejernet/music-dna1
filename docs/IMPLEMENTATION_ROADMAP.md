@@ -2318,6 +2318,141 @@ ikke afgjort.
 
 ---
 
+## M14 — Integration af Observability-modulet fra M13
+
+**Scope-note:** M14 er ikke en genoptagelse af nogen oprindelig
+roadmap-milestone — det er en ny, eksplicit afgrænset
+integrationsmilestone, der lukker det åbne punkt fra M13s eget Review
+Report ("hvornår/hvordan Observability faktisk kobles til
+`applicationLayer`"). Ti bindende regler (Application Layer integreres
+med `ObservationSink`, intet andet lag må kende den; Learning Engine
+forbliver fuldstændig uændret; `RecommendationAccepted`/`Rejected`/
+`Known`/`LearningApplied` produceres på de naturlige steder i
+eksisterende use cases, ingen kunstige events; `ObservationSink` kaldes
+kun efter domænehandlingen er lykkedes, ingen observation ved fejl;
+ingen observation kan ændre workflowet — `ObservationSink` er best
+effort; ingen ny persistence; ingen nye metrikker; ingen ændringer i
+Observabilitys offentlige kontrakter; obligatoriske beviser; Review
+Report skal dokumentere placering og bevis for ingen adfærdsændring)
+styrede det faktiske arbejde.
+
+**Hvad blev bygget?**
+Præcis én Application Service integreres med `ObservationSink`:
+`LearnFromReaction` (`src/modules/applicationLayer/useCases/learnFromReaction.ts`).
+Den er den eneste use case i systemet, der i samme kald både kender
+reaktionstypen (`save`/`reject`/`known`) og kan se, om `learn()` faktisk
+ændrede noget — derfor er den det ene naturlige integrationspunkt,
+ikke et valgt blandt flere ligeværdige kandidater.
+
+- Constructoren tager nu et 5. parameter, `observationSink:
+  ObservationSink` (interfacet, ikke den konkrete klasse — kun
+  Application Layer må kende selve kontrakten, Rule 1).
+- `execute()` kalder `recordObservations(...)` **efter** begge
+  `save()`-kald allerede er lykkedes, og **før** `return
+  success(updatedUserDna)` — aldrig før, og aldrig ved en fejlretur
+  (Rule 4).
+- `recordObservations()` producerer nøjagtigt to observationer pr.
+  succesfuldt kald: én af `RecommendationAccepted` (save) /
+  `RecommendationRejected` (reject) / `RecommendationKnown` (known),
+  valgt via `learningEvent.reactionType` — ingen ny gren-logik, blot en
+  oversættelse af et allerede eksisterende felt; samt altid
+  `LearningApplied`, med `changed = userDna.version !==
+  updatedUserDna.version` — genbruger M8s eget no-op-signal (version
+  inkrementeres kun ved faktisk ændring), så Learning Engine hverken
+  ændres eller spørges (Rule 2).
+- `RecommendationShown` er **bevidst ikke** koblet: Rule 3s liste
+  (Accepted/Rejected/Known/LearningApplied) nævner den ikke, og der
+  findes ingen eksisterende use case, der "viser" en anbefaling — Queue
+  (M6) er et rent domænemodul uden Application Layer-indpakning. At
+  koble den ville kræve et kunstigt event eller en ny use case, begge
+  forbudt ("ingen kunstige events", "ingen kode uden for denne
+  integration").
+- Best effort (Rule 5, ADR-32): `recordSafely()` fanger og forkaster
+  enhver exception fra et `record*`-kald, isoleret pr. kald (et
+  fejlende Accepted-kald forhindrer ikke det efterfølgende
+  LearningApplied-kald), og intet herfra kan nå `execute()`s eget
+  `Result`.
+
+**Infrastructure-wiring:** `compositionRoot.ts` konstruerer den ene
+`InMemoryObservationSink` og injicerer den i `LearnFromReaction`.
+
+**Hvorfor `AppContext.observationSink` eksponerer den konkrete
+`InMemoryObservationSink` og ikke `ObservationSink`-interfacet — bevidst
+arkitekturvalg, ikke en teknisk begrænsning:** `AppContext` (M11 Rule 6)
+er en beskrivelse af, hvad Composition Root faktisk byggede — ikke en
+ny kontrakt-grænse i sig selv. De øvrige felter i `AppContext`
+(`repositories.*`, som allerede M11 fastlagde) er af samme grund typet
+som *interfaces* (`UserDnaRepository` osv.), fordi disse specifikt er de
+kontrakter, andre lag (Application Layer) modtager og bruger gennem
+dependency injection. `observationSink` er derimod ikke tiltænkt givet
+videre til noget nyt lag via `AppContext` — den eneste forbruger af
+`ObservationSink`-kontrakten er allerede `LearnFromReaction`, som får
+den direkte i sin constructor fra `buildAppContext()`, ikke via
+`AppContext`-objektet. `AppContext.observationSink` findes udelukkende,
+så tests (og en fremtidig, evt. persisterende milestone) kan inspicere,
+hvad Composition Root konstruerede — samme rolle som
+`AppContext.repositories` allerede tillader for repositories, blot
+uden at det behøver interface-typen, fordi ingen anden kode-sti
+konsumerer feltet gennem interfacet. At typen er den konkrete klasse er
+derfor et bevidst valg, der holder `ObservationSink`-interfacet
+begrænset til præcis ét sted i systemet — `LearnFromReaction`s egen
+constructor-parameter — og er hverken en TypeScript-begrænsning (den
+konkrete klasse implementerer interfacet og kunne frit være typet som
+det) eller en tilfældighed. Valget er verificeret automatisk af en ny
+test i `src/architecture.test.ts`, der scanner hele `infrastructure/`
+for `ObservationSink`-interface-imports (skal være nul).
+
+**Tests tilføjet:**
+- 4 tests: korrekt observation for save/reject/known, samt
+  `LearningApplied` med `changed=false` når ingen TrackDNA findes.
+- 5 tests: intet registreres ved nogen af de 5 fejlveje
+  (UserDnaNotFound + 4×RepositoryFailure).
+- 2 tests: en `FakeObservationSink({ throwOnRecord: true })` ændrer
+  hverken `execute()`s `Result` eller de faktiske repository-saves.
+- 1 test: identisk output til et direkte `learn()`-kald, uændret siden
+  M10 — beviser at M14s integration ikke har tilføjet domænelogik.
+- 2 tests i `compositionRoot.test.ts` opdateret/tilføjet for det nye
+  `observationSink`-felt, inklusive et bevis for at samme sink-instans
+  deles mellem `AppContext.observationSink` og `LearnFromReaction`.
+
+**Hvilke tests blev kørt?**
+`npm run test` → 244/244 grønne (230 fra M1-M13, uændrede eller
+opdateret for det nye constructor-parameter, + 14 nye). `npx tsc -b`,
+`npm run lint`, `npm run build` alle grønne.
+
+**Bevis for ingen ændring af domæneadfærd:** `git diff` mod M13s commit
+(`e17a7cc`) for `src/modules/learningEngine/`, `rankingEngine/`,
+`queue/`, `candidateProviders/`, `enrichment/`, `persistence/` viser
+ingen ændringer i nogen af de seks mapper. `git status` viser præcis
+seks ændrede filer, alle inden for M14s scope
+(`learnFromReaction.ts`/`.test.ts`, `appContext.ts`,
+`compositionRoot.ts`/`.test.ts`, `architecture.test.ts`) — ingen kode
+uden for denne integration.
+
+**Er milestone 100% færdig ifølge Definition of Done?**
+1. Acceptkriterier opfyldt — ja, se bevisafsnittene ovenfor. 2. Tests
+   består — ja, 244/244. 3. Ingen TODO/placeholder — ja. 4.
+   Dokumentation opdateret — ja, denne Review Report plus
+   inline-kommentarer i koden. 5. Fungerer isoleret uden fremtidige
+   milestones — ja, kun de seks nævnte filer rørt. 6. Ingen kendte
+   kritiske fejl — ja. 7. Reviewet mod PRD/TDS/ADR — ja: ADR-16 til
+   ADR-31 er alle respekteret, ingen tidligere milestone ændret uden ny
+   ADR. 8. Demonstrerer den tilsigtede værdi — ja: i modsætning til M13
+   producerer systemet nu faktisk observationer under normal
+   applikationskørsel — bevist ved `compositionRoot.test.ts`s nye test,
+   der læser `appContext.observationSink.getAll()` efter et rigtigt
+   `learnFromReaction.execute()`-kald, ikke kun arkitektonisk
+   muliggjort.
+
+**Ja — M14 er 100% færdig ifølge Definition of Done.**
+
+**Er projektet klar til næste milestone?**
+Ja, med to åbne punkter: (a) den oprindelige M11 ("To rigtige Candidate
+Providers") er stadig ikke bygget; (b) om ADR-22 skal opdateres (fra
+M12) er stadig ikke afgjort.
+
+---
+
 ## Historik: oprindelig M11 (ikke udført)
 
 **Scope-note tilføjet efter M3 (afventer godkendelse, ikke selvstændigt

@@ -1360,6 +1360,46 @@ ADR-16, når/hvis den besluttes) — bevidst ikke løst her.
   funktion hører til et andet modul (`analytics`, per TDS), aldrig
   inde i `observability/` selv.
 
+### ADR-32 — Observability er best effort; manglende observationer må aldrig påvirke domæneadfærd eller use case-resultater
+
+- **Beslutning:** Observability er best effort. Manglende observationer
+  må aldrig påvirke domæneadfærd eller use case-resultater.
+- **Baggrund:** M14 koblede `ObservationSink` ind i `LearnFromReaction`
+  — det første sted i systemet, hvor et rigtigt kald til
+  Observability sker under normal applikationskørsel, ikke kun i test
+  (M13 Rule 5/6, M14 Rule 5). I det øjeblik et faktisk kald eksisterer,
+  bliver spørgsmålet "hvad sker der, hvis det kald selv fejler?" for
+  første gang virkeligt, ikke kun hypotetisk — uden en eksplicit
+  beslutning ville en fremtidig implementation af `ObservationSink`
+  (fx en der skriver til disk eller et netværk) kunne få lov til at
+  vælte eller ændre resultatet af en use case, der i øvrigt allerede er
+  lykkedes.
+- **Alternativer overvejet:** (a) lad en fejl i `ObservationSink`
+  propagere som en almindelig `Failure` fra `execute()`, på linje med
+  en rigtig repository-fejl (M12 Rule 4); (b) lad en fejl logges eller
+  retries, som en slags svag garanti om at observationen "nok" bliver
+  registreret alligevel.
+- **Hvorfor denne løsning:** (a) ville gøre en måling — noget der per
+  definition kun beskriver, hvad der allerede skete — i stand til at
+  forhindre selve den handling, den skulle beskrive, i at have
+  fundet sted for kalderen; det modsiger direkte M13 Rule 1
+  ("Observability må kun observere, aldrig påvirke beslutninger") og
+  ADR-31s princip om at en måling altid er *efterfølgende* og
+  *afledt*. (b) ville kræve logging/retry-infrastruktur, som M10 Rule
+  9 og M12 Rule 4 begge allerede eksplicit har udskudt til en senere
+  milestone — at indføre den nu, kun for Observability, ville være en
+  stille undtagelse fra en allerede bindende regel. At fange og
+  forkaste er den eneste løsning, der gør Observability strukturelt
+  ude af stand til at påvirke noget, uanset hvor upålidelig en
+  fremtidig `ObservationSink`-implementation måtte være.
+- **Konsekvenser:** Enhver fremtidig `ObservationSink`-implementation
+  (fx en persisterende) skal selv acceptere, at dens fejl aldrig ses af
+  kalderen — den kan ikke forvente at kunne signalere "prøv igen" eller
+  "dette gik galt" opad. Fremtidige integrationer af Observability i
+  andre use cases end `LearnFromReaction` skal følge samme
+  fang-og-forkast-mønster (`recordSafely()`s isolerede, pr.-kald `try/catch`
+  er referenceimplementationen), ikke opfinde en ny fejlstrategi.
+
 ---
 
 ## 11. Non-functional Requirements (NFR)

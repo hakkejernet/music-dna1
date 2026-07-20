@@ -4,6 +4,7 @@ import { repositoryFailure, userDnaNotFound } from '../../domainErrors';
 import type { LearningEvent } from '../../feedbackPipeline';
 import { buildAppContext } from '../../infrastructure';
 import { DEFAULT_LEARNING_STRATEGIES, learn, type LearningStrategy } from '../../learningEngine';
+import type { Observation, ObservationSink } from '../../observability';
 import type { LearningEventRepository, TrackDnaRepository, UserDnaRepository } from '../../persistence';
 import { failure, success, type Result } from '../../result';
 import { validateSignalVector, type TrackDNA } from '../../trackDna';
@@ -115,6 +116,51 @@ class FakeLearningEventRepository implements LearningEventRepository {
   }
 }
 
+/**
+ * A test double proving M14 Rule 5/ADR-32 ("ObservationSink er best
+ * effort"): when `throwOnRecord` is set, every `record*` call throws,
+ * simulating a broken Observability implementation — used to prove that
+ * `LearnFromReaction.execute()`'s own `Result` never depends on whether
+ * recording succeeded.
+ */
+class FakeObservationSink implements ObservationSink {
+  public recorded: Observation[] = [];
+  private readonly throwOnRecord: boolean;
+
+  constructor(options: { throwOnRecord?: boolean } = {}) {
+    this.throwOnRecord = options.throwOnRecord ?? false;
+  }
+
+  recordRecommendationShown(input: { candidateRef: string; trackDnaRef: string; score: number; providerNames: readonly string[] }, now: Date): void {
+    this.push({ type: 'RecommendationShown', ...input, observedAt: now.toISOString() });
+  }
+
+  recordRecommendationAccepted(input: { candidateRef: string; trackDnaRef: string }, now: Date): void {
+    this.push({ type: 'RecommendationAccepted', ...input, observedAt: now.toISOString() });
+  }
+
+  recordRecommendationRejected(input: { candidateRef: string; trackDnaRef: string }, now: Date): void {
+    this.push({ type: 'RecommendationRejected', ...input, observedAt: now.toISOString() });
+  }
+
+  recordRecommendationKnown(input: { candidateRef: string; trackDnaRef: string }, now: Date): void {
+    this.push({ type: 'RecommendationKnown', ...input, observedAt: now.toISOString() });
+  }
+
+  recordLearningApplied(input: { userId: string; eventId: string; changed: boolean }, now: Date): void {
+    this.push({ type: 'LearningApplied', ...input, observedAt: now.toISOString() });
+  }
+
+  getAll(): readonly Observation[] {
+    return this.recorded;
+  }
+
+  private push(observation: Observation): void {
+    if (this.throwOnRecord) throw new Error('simulated ObservationSink failure');
+    this.recorded.push(observation);
+  }
+}
+
 /** Unwraps a Result in a test, failing loudly (not silently) if it's actually a Failure — keeps the "happy path" tests readable. */
 const expectSuccess = <T>(result: Result<T, unknown>): T => {
   if (!result.success) throw new Error(`expected Success, got Failure: ${JSON.stringify(result.error)}`);
@@ -129,7 +175,7 @@ describe('LearnFromReaction — dependency injection (M10 Rule 4/5)', () => {
     const trackDnaRepository = new FakeTrackDnaRepository(trackDna);
     const learningEventRepository = new FakeLearningEventRepository();
 
-    const useCase = new LearnFromReaction(userDnaRepository, trackDnaRepository, learningEventRepository, DEFAULT_LEARNING_STRATEGIES);
+    const useCase = new LearnFromReaction(userDnaRepository, trackDnaRepository, learningEventRepository, DEFAULT_LEARNING_STRATEGIES, new FakeObservationSink());
     await useCase.execute('user-1', buildLearningEvent({ trackDnaRef: 'track-1' }));
 
     expect(userDnaRepository.getByIdCalls).toEqual(['user-1']);
@@ -143,7 +189,7 @@ describe('LearnFromReaction — dependency injection (M10 Rule 4/5)', () => {
     const learningEventRepository = new FakeLearningEventRepository();
     const learningEvent = buildLearningEvent();
 
-    const useCase = new LearnFromReaction(userDnaRepository, new FakeTrackDnaRepository(trackDna), learningEventRepository, DEFAULT_LEARNING_STRATEGIES);
+    const useCase = new LearnFromReaction(userDnaRepository, new FakeTrackDnaRepository(trackDna), learningEventRepository, DEFAULT_LEARNING_STRATEGIES, new FakeObservationSink());
     await useCase.execute('user-1', learningEvent);
 
     expect(userDnaRepository.saveCalls).toHaveLength(1);
@@ -162,6 +208,7 @@ describe('LearnFromReaction — no domain logic in the Application Layer (M10 Ru
       new FakeTrackDnaRepository(trackDna),
       new FakeLearningEventRepository(),
       DEFAULT_LEARNING_STRATEGIES,
+      new FakeObservationSink(),
     );
     const resultFromUseCase = expectSuccess(await useCase.execute('user-1', learningEvent));
 
@@ -183,6 +230,7 @@ describe('LearnFromReaction — no domain logic in the Application Layer (M10 Ru
       new FakeTrackDnaRepository(buildTrackDna('track-1')),
       new FakeLearningEventRepository(),
       [fixedResultStrategy],
+      new FakeObservationSink(),
     );
     const result = expectSuccess(await useCase.execute('user-1', buildLearningEvent()));
 
@@ -206,6 +254,7 @@ describe('LearnFromReaction — Learning Engine is unchanged, only called (M10 R
         new FakeTrackDnaRepository(trackDna),
         new FakeLearningEventRepository(),
         DEFAULT_LEARNING_STRATEGIES,
+        new FakeObservationSink(),
       ).execute('user-1', learningEvent),
     );
 
@@ -221,6 +270,7 @@ describe('LearnFromReaction — missing data is handled the same way M8 already 
       new FakeTrackDnaRepository(null),
       new FakeLearningEventRepository(),
       DEFAULT_LEARNING_STRATEGIES,
+      new FakeObservationSink(),
     );
 
     const result = expectSuccess(await useCase.execute('user-1', buildLearningEvent()));
@@ -235,6 +285,7 @@ describe('LearnFromReaction — missing data is handled the same way M8 already 
       new FakeTrackDnaRepository(buildTrackDna('track-1')),
       new FakeLearningEventRepository(),
       DEFAULT_LEARNING_STRATEGIES,
+      new FakeObservationSink(),
     );
 
     const result = await useCase.execute('missing-user', buildLearningEvent());
@@ -252,6 +303,7 @@ describe('LearnFromReaction — error propagation (M12 Rule 4): no logging, no r
       trackDnaRepository,
       new FakeLearningEventRepository(),
       DEFAULT_LEARNING_STRATEGIES,
+      new FakeObservationSink(),
     );
 
     const result = await useCase.execute('user-1', buildLearningEvent());
@@ -269,6 +321,7 @@ describe('LearnFromReaction — error propagation (M12 Rule 4): no logging, no r
       new FakeTrackDnaRepository(null, theFailure),
       new FakeLearningEventRepository(),
       DEFAULT_LEARNING_STRATEGIES,
+      new FakeObservationSink(),
     );
 
     const result = await useCase.execute('user-1', buildLearningEvent());
@@ -285,6 +338,7 @@ describe('LearnFromReaction — error propagation (M12 Rule 4): no logging, no r
       new FakeTrackDnaRepository(buildTrackDna('track-1')),
       learningEventRepository,
       DEFAULT_LEARNING_STRATEGIES,
+      new FakeObservationSink(),
     );
 
     const result = await useCase.execute('user-1', buildLearningEvent());
@@ -300,6 +354,7 @@ describe('LearnFromReaction — error propagation (M12 Rule 4): no logging, no r
       new FakeTrackDnaRepository(buildTrackDna('track-1')),
       new FakeLearningEventRepository(theFailure),
       DEFAULT_LEARNING_STRATEGIES,
+      new FakeObservationSink(),
     );
 
     const result = await useCase.execute('user-1', buildLearningEvent());
@@ -321,6 +376,7 @@ describe('LearnFromReaction — no mutation (M10 Rule 7)', () => {
       new FakeTrackDnaRepository(trackDna),
       new FakeLearningEventRepository(),
       DEFAULT_LEARNING_STRATEGIES,
+      new FakeObservationSink(),
     ).execute('user-1', learningEvent);
 
     expect(userDna).toEqual(userDnaBefore);
@@ -349,5 +405,228 @@ describe('LearnFromReaction — end-to-end via the Composition Root (M11)', () =
     expect(reloadedUserDna?.signals.mainstream.value).toBeGreaterThan(initialUserDna.signals.mainstream.value);
     expect(reloadedUserDna?.coldStart).toBe(false);
     expect(persistedEvent).toEqual(learningEvent);
+  });
+});
+
+describe('LearnFromReaction — observations are produced at the natural points in the workflow (M14 Rule 3/4)', () => {
+  it('records RecommendationAccepted + LearningApplied for a "save" reaction', async () => {
+    const userDna = buildUserDna('user-1');
+    const observationSink = new FakeObservationSink();
+    const learningEvent = buildLearningEvent({ reactionType: 'save' });
+
+    const useCase = new LearnFromReaction(
+      new FakeUserDnaRepository(userDna),
+      new FakeTrackDnaRepository(buildTrackDna('track-1')),
+      new FakeLearningEventRepository(),
+      DEFAULT_LEARNING_STRATEGIES,
+      observationSink,
+    );
+    await useCase.execute('user-1', learningEvent);
+
+    expect(observationSink.recorded).toEqual([
+      { type: 'RecommendationAccepted', candidateRef: 'candidate-1', trackDnaRef: 'track-1', observedAt: RECORDED_AT },
+      { type: 'LearningApplied', userId: 'user-1', eventId: 'evt-1', changed: true, observedAt: RECORDED_AT },
+    ]);
+  });
+
+  it('records RecommendationRejected for a "reject" reaction', async () => {
+    const userDna = buildUserDna('user-1');
+    const observationSink = new FakeObservationSink();
+    const learningEvent = buildLearningEvent({ reactionType: 'reject' });
+
+    const useCase = new LearnFromReaction(
+      new FakeUserDnaRepository(userDna),
+      new FakeTrackDnaRepository(buildTrackDna('track-1')),
+      new FakeLearningEventRepository(),
+      DEFAULT_LEARNING_STRATEGIES,
+      observationSink,
+    );
+    await useCase.execute('user-1', learningEvent);
+
+    expect(observationSink.recorded[0]).toEqual({
+      type: 'RecommendationRejected',
+      candidateRef: 'candidate-1',
+      trackDnaRef: 'track-1',
+      observedAt: RECORDED_AT,
+    });
+  });
+
+  it('records RecommendationKnown for a "known" reaction', async () => {
+    const userDna = buildUserDna('user-1');
+    const observationSink = new FakeObservationSink();
+    const learningEvent = buildLearningEvent({ reactionType: 'known' });
+
+    const useCase = new LearnFromReaction(
+      new FakeUserDnaRepository(userDna),
+      new FakeTrackDnaRepository(buildTrackDna('track-1')),
+      new FakeLearningEventRepository(),
+      DEFAULT_LEARNING_STRATEGIES,
+      observationSink,
+    );
+    await useCase.execute('user-1', learningEvent);
+
+    expect(observationSink.recorded[0]).toEqual({
+      type: 'RecommendationKnown',
+      candidateRef: 'candidate-1',
+      trackDnaRef: 'track-1',
+      observedAt: RECORDED_AT,
+    });
+  });
+
+  it('records LearningApplied with changed=false when learn() produces no signal change (no matching TrackDNA)', async () => {
+    const userDna = buildUserDna('user-1');
+    const observationSink = new FakeObservationSink();
+    // No TrackDNA is registered for 'track-1' — learn() falls back to its
+    // own null-TrackDNA behavior (M8 Rule 7), which here (single
+    // 'mainstream' signal, cold-start user) does not change the version.
+    const useCase = new LearnFromReaction(
+      new FakeUserDnaRepository(userDna),
+      new FakeTrackDnaRepository(null),
+      new FakeLearningEventRepository(),
+      DEFAULT_LEARNING_STRATEGIES,
+      observationSink,
+    );
+    const result = expectSuccess(await useCase.execute('user-1', buildLearningEvent()));
+
+    expect(result.version).toBe(userDna.version);
+    const learningApplied = observationSink.recorded.find((observation) => observation.type === 'LearningApplied');
+    expect(learningApplied).toEqual({ type: 'LearningApplied', userId: 'user-1', eventId: 'evt-1', changed: false, observedAt: RECORDED_AT });
+  });
+});
+
+describe('LearnFromReaction — no observation is produced when the use case fails (M14 Rule 4)', () => {
+  it('records nothing when UserDNA is not found', async () => {
+    const observationSink = new FakeObservationSink();
+    const useCase = new LearnFromReaction(
+      new FakeUserDnaRepository(null),
+      new FakeTrackDnaRepository(buildTrackDna('track-1')),
+      new FakeLearningEventRepository(),
+      DEFAULT_LEARNING_STRATEGIES,
+      observationSink,
+    );
+
+    await useCase.execute('missing-user', buildLearningEvent());
+
+    expect(observationSink.recorded).toEqual([]);
+  });
+
+  it('records nothing when UserDnaRepository.getById fails', async () => {
+    const observationSink = new FakeObservationSink();
+    const useCase = new LearnFromReaction(
+      new FakeUserDnaRepository(null, { failNextGetById: repositoryFailure('UserDnaRepository.getById', 'simulated outage') }),
+      new FakeTrackDnaRepository(buildTrackDna('track-1')),
+      new FakeLearningEventRepository(),
+      DEFAULT_LEARNING_STRATEGIES,
+      observationSink,
+    );
+
+    await useCase.execute('user-1', buildLearningEvent());
+
+    expect(observationSink.recorded).toEqual([]);
+  });
+
+  it('records nothing when TrackDnaRepository.getById fails', async () => {
+    const observationSink = new FakeObservationSink();
+    const useCase = new LearnFromReaction(
+      new FakeUserDnaRepository(buildUserDna('user-1')),
+      new FakeTrackDnaRepository(null, repositoryFailure('TrackDnaRepository.getById', 'simulated outage')),
+      new FakeLearningEventRepository(),
+      DEFAULT_LEARNING_STRATEGIES,
+      observationSink,
+    );
+
+    await useCase.execute('user-1', buildLearningEvent());
+
+    expect(observationSink.recorded).toEqual([]);
+  });
+
+  it('records nothing when UserDnaRepository.save fails', async () => {
+    const observationSink = new FakeObservationSink();
+    const useCase = new LearnFromReaction(
+      new FakeUserDnaRepository(buildUserDna('user-1'), { failNextSave: repositoryFailure('UserDnaRepository.save', 'simulated outage') }),
+      new FakeTrackDnaRepository(buildTrackDna('track-1')),
+      new FakeLearningEventRepository(),
+      DEFAULT_LEARNING_STRATEGIES,
+      observationSink,
+    );
+
+    await useCase.execute('user-1', buildLearningEvent());
+
+    expect(observationSink.recorded).toEqual([]);
+  });
+
+  it('records nothing when LearningEventRepository.save fails, even though UserDNA was already saved', async () => {
+    const observationSink = new FakeObservationSink();
+    const useCase = new LearnFromReaction(
+      new FakeUserDnaRepository(buildUserDna('user-1')),
+      new FakeTrackDnaRepository(buildTrackDna('track-1')),
+      new FakeLearningEventRepository(repositoryFailure('LearningEventRepository.save', 'simulated outage')),
+      DEFAULT_LEARNING_STRATEGIES,
+      observationSink,
+    );
+
+    await useCase.execute('user-1', buildLearningEvent());
+
+    expect(observationSink.recorded).toEqual([]);
+  });
+});
+
+describe('LearnFromReaction — ObservationSink is best effort (M14 Rule 5, ADR-32)', () => {
+  it('a throwing ObservationSink never changes execute()\'s own Result — the use case still returns Success', async () => {
+    const userDna = buildUserDna('user-1');
+    const useCase = new LearnFromReaction(
+      new FakeUserDnaRepository(userDna),
+      new FakeTrackDnaRepository(buildTrackDna('track-1')),
+      new FakeLearningEventRepository(),
+      DEFAULT_LEARNING_STRATEGIES,
+      new FakeObservationSink({ throwOnRecord: true }),
+    );
+
+    const result = await useCase.execute('user-1', buildLearningEvent());
+
+    expect(result.success).toBe(true);
+  });
+
+  it('a throwing ObservationSink still lets the workflow persist exactly as it would with a healthy sink', async () => {
+    const userDna = buildUserDna('user-1');
+    const userDnaRepository = new FakeUserDnaRepository(userDna);
+    const learningEventRepository = new FakeLearningEventRepository();
+    const useCase = new LearnFromReaction(
+      userDnaRepository,
+      new FakeTrackDnaRepository(buildTrackDna('track-1')),
+      learningEventRepository,
+      DEFAULT_LEARNING_STRATEGIES,
+      new FakeObservationSink({ throwOnRecord: true }),
+    );
+
+    await useCase.execute('user-1', buildLearningEvent());
+
+    expect(userDnaRepository.saveCalls).toHaveLength(1);
+    expect(learningEventRepository.saveCalls).toHaveLength(1);
+  });
+});
+
+describe('LearnFromReaction — Learning Engine remains unchanged by the M14 integration (M14 Rule 2, M10 Rule 3)', () => {
+  it('still produces byte-for-byte the same result as calling learningEngine.learn() directly, with an ObservationSink now wired in', async () => {
+    // Identical assertion to the M10-era "no domain logic" test, repeated
+    // here under M14 to prove that adding observability changed nothing
+    // about what learn() itself computes — this use case still only
+    // sequences load → learn() → save → (best-effort) record.
+    const userDna = buildUserDna('user-1');
+    const trackDna = buildTrackDna('track-1');
+    const learningEvent = buildLearningEvent();
+
+    const direct = learn(DEFAULT_LEARNING_STRATEGIES, userDna, learningEvent, trackDna);
+    const viaUseCase = expectSuccess(
+      await new LearnFromReaction(
+        new FakeUserDnaRepository(userDna),
+        new FakeTrackDnaRepository(trackDna),
+        new FakeLearningEventRepository(),
+        DEFAULT_LEARNING_STRATEGIES,
+        new FakeObservationSink(),
+      ).execute('user-1', learningEvent),
+    );
+
+    expect(viaUseCase).toEqual(direct);
   });
 });

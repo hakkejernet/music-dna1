@@ -1,4 +1,5 @@
 import type { LearnFromReaction, LoadUserDna, PersistLearningEvent, SaveUserDna } from '../applicationLayer';
+import type { InMemoryObservationSink } from '../observability';
 import type { LearningEventRepository, TrackDnaRepository, UserDnaRepository } from '../persistence';
 
 /**
@@ -7,6 +8,14 @@ import type { LearningEventRepository, TrackDnaRepository, UserDnaRepository } f
  * and how it's connected," produced once by `buildAppContext()`;
  * nothing in it represents a changing value (no "current user," no
  * counters, no cache) — only the object graph itself.
+ *
+ * `observationSink` is typed as the concrete `InMemoryObservationSink`,
+ * not the `ObservationSink` interface (M14 Rule 1: "Ingen andre lag må
+ * kende ObservationSink" — only Application Layer's own use cases are
+ * meant to know that contract). Infrastructure already legitimately
+ * owns concrete implementations (M11 Rule 1), so referencing the
+ * concrete class here for wiring purposes doesn't cross that line —
+ * see Review Report for the full reasoning.
  */
 export interface AppContext {
   repositories: {
@@ -20,4 +29,5 @@ export interface AppContext {
     persistLearningEvent: PersistLearningEvent;
     learnFromReaction: LearnFromReaction;
   };
+  observationSink: InMemoryObservationSink;
 }
