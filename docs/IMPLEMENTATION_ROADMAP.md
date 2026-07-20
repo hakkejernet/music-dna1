@@ -1106,11 +1106,26 @@ konsumere.
 
 ---
 
-## M7 — 5 feedback-reaktioner
+## M7 — Feedback Pipeline
 
-**Type:** Brugervendt værdi.
+**Scope-note (afløser oprindelig beskrivelse nedenfor, samme mønster som
+M3-M6):** da M7 skulle påbegyndes, indskærpede brugeren scopet
+eksplicit til KUN Feedback Pipeline — validering, normalisering,
+berigelse med tidsstempel, og omdannelse til et domæneobjekt for M8.
+Otte bindende regler (pipeline ejer kun feedback, input er kun
+`QueueReactionEvent`, output er et domæneobjekt, må validere men ikke
+lære, determinisme, idempotens, manglende metadata er normalt, intet
+persistence/database/IndexedDB/API) styrede det faktiske arbejde. Det
+er en markant indskrænkning af det oprindelige M7 nedenfor på to
+punkter: (a) tre reaktionstyper (`save`/`reject`/`known`, M6's egne)
+i stedet for fem graduerede emoji-reaktioner, og (b) ingen UI, ingen
+persistering — se Review Report for den fulde konsekvens af begge. Den
+oprindelige "Formål/Omfang/Acceptkriterier" nedenfor er bevaret som
+historik, men **erstattet** af det faktisk udførte arbejde.
 
-**Formål:** Udvide fra v1's Gem/Afvis/Kendte til de 5 graduerede
+**Type (oprindeligt):** Brugervendt værdi.
+
+**Formål (oprindeligt):** Udvide fra v1's Gem/Afvis/Kendte til de 5 graduerede
 reaktioner (❤️👍😐👎🚫), med det rigere `FeedbackEvent`-skema (TDS
 afsnit 3) — inklusive et fuldt snapshot af score+`TrackDNA` på
 reaktionstidspunktet.
@@ -1118,14 +1133,14 @@ reaktionstidspunktet.
 **Afhængigheder:** M6 (der skal være en rigtig `RankedCandidate` i UI
 at reagere på).
 
-**Omfang:**
+**Omfang (oprindeligt):**
 - Fem knapper/handlinger i `discovery`.
 - `FeedbackEvent` persisteres permanent ved hver reaktion (TDS
   Persistence, "kilde til sandhed").
 - Genbrug af v1's `RejectReasonPanel`-mønster til valgfri fritekst ved
   👎/🚫.
 
-**Acceptkriterier:**
+**Acceptkriterier (oprindeligt):**
 - Alle 5 reaktioner er tilgængelige og producerer en korrekt,
   struktureret `FeedbackEvent`.
 - Hvert `FeedbackEvent` indeholder et fuldt, korrekt snapshot af den
@@ -1141,6 +1156,123 @@ at reagere på).
 **Review-punkt:** er de 5 reaktioners visuelle/tekstuelle udtryk
 tydelige nok at en bruger forstår forskellen mellem 👍 og ❤️, og mellem
 👎 og 🚫, uden forklaring?
+
+### Review Report — M7
+
+**Hvad blev bygget?**
+`src/modules/feedbackPipeline/` (ny mappe, navngivnings-note nedenfor):
+- `types.ts` — `LearningEvent` (`eventId`, `candidateRef`, `trackDnaRef`,
+  `reactionType`, `recordedAt`), `FeedbackRejectionReason` (fire
+  navngivne afvisningsgrunde), `FeedbackPipelineResult` (discriminated
+  union: `{accepted: true, learningEvent}` eller `{accepted: false,
+  reason}`).
+- `feedbackPipeline.ts` — `processReactionEvent(input: unknown, now:
+  Date): FeedbackPipelineResult`. `input` er bevidst `unknown`, ikke
+  den typede `QueueReactionEvent` (samme "antag intet om upstream-data"
+  disciplin som `validateSignalVector`, M1): validerer at input er et
+  objekt med ikke-tomme `candidateRef`/`trackDnaRef`-strenge og en
+  `reactionType` blandt de tre kendte (`save`/`reject`/`known`);
+  normaliserer (trimmer) ref-felterne; afviser med en navngivet grund
+  ved fejl, uden at kaste. `computeEventId()` er en ren FNV-1a-hash over
+  `candidateRef::trackDnaRef::reactionType` — deterministisk og
+  indholds-afledt, aldrig afhængig af `now` eller kaldetidspunkt.
+- `feedbackPipeline.test.ts` — 21 nye tests.
+
+**Navngivnings- og scope-afklaring, gjort eksplicit (ikke en konflikt,
+ingen ADR nødvendig — intet fra M1-M6 er ændret):**
+- Modulet hedder `feedbackPipeline`, ikke TDS' `feedback` — TDS §2's
+  `feedback`-modul inkluderer persistering og distribution til
+  `user-dna`/`analytics`, som M7's Rule 1 og Rule 8 begge eksplicit
+  forbyder. `feedbackPipeline` er den snævre, rene delmængde denne
+  milestone bygger; det fulde `feedback`-modul (med persistering) er en
+  fremtidig opgave, ikke omdøbt eller udskudt implicit.
+- `LearningEvent` er en bevidst **smallere** struktur end TDS §3's
+  `FeedbackEvent`. TDS' skema kræver `rankedCandidateSnapshot` (fuld
+  kopi af score + `TrackDNA`), `sessionRef`, `queuePosition`, og
+  valgfri `reason` — ingen af disse findes i M7's eneste tilladte input
+  (`QueueReactionEvent` fra M6: kun `candidateRef`, `trackDnaRef`,
+  `reactionType`). At opfinde disse felter ville være et gæt, ikke en
+  normalisering (Rule 4 forbyder netop det slags). `LearningEvent`
+  indeholder derfor præcis det der ærligt kan udledes af den erklærede
+  input — resten (snapshot, session-kontekst) er en fremtidig
+  koblingsopgave (formentlig når `discovery`/en session-container
+  bygges), ikke noget denne milestone kan eller skal foregribe.
+- Reaktions-vokabularet er de tre typer M6's `QueueReactionEvent`
+  allerede definerer (`save`/`reject`/`known`), ikke det oprindelige
+  roadmaps fem graduerede emoji-reaktioner (❤️👍😐👎🚫). At udvide til
+  fem kræver en ændring af M6's `ReactionType` — en tidligere
+  milestone — hvilket nu kræver en ny ADR (ADR-16) hvis/når det bliver
+  aktuelt. Denne beslutning er derfor ikke truffet her; den er gjort
+  synlig som et åbent punkt for en fremtidig milestone, samme mønster
+  som M3/M11's scope-hul.
+
+**Hvilke tests blev kørt?**
+`npm run test` → 103/103 grønne (82 fra M1-M6 + 21 nye). `npx tsc -b`,
+`npm run lint`, `npm run build` alle grønne og uændrede for al
+eksisterende kode.
+
+**Bevis for determinisme:** samme `(input, now)` kaldt to gange giver
+`toEqual`-identisk resultat.
+
+**Bevis for idempotens:** samme event behandlet ved to forskellige
+`now`-tidspunkter giver samme `eventId` begge gange (selvom
+`recordedAt` med rette er forskellig) — `eventId` er en ren funktion af
+selve hændelsens indhold, aldrig af hvornår eller hvor mange gange den
+behandles; forskellige reaktionstyper på samme kandidat giver
+forskellige, men hver for sig stabile, id'er.
+
+**Bevis for validering og afvisning af ugyldige events:** `null`,
+`undefined`, en streng, et tal, og et array afvises alle som
+`not-an-object`; manglende/tomme/whitespace-only `candidateRef` eller
+`trackDnaRef` afvises med navngivne grunde; en ukendt `reactionType`
+(eller en helt manglende) afvises som `invalid-reaction-type`; intet af
+dette kaster nogensinde en exception.
+
+**Bevis for at gyldige events bliver til LearningEvents:** et gyldigt
+event giver et fuldt udfyldt, korrekt normaliseret `LearningEvent`; alle
+tre reaktionstyper accepteres; omgivende whitespace på ref-felter
+trimmes; uventede ekstra felter i input (fx et forsøgt `sessionRef`
+eller `score`) ignoreres uden at afvise hændelsen (Rule 7: minimal,
+kun-de-tre-nødvendige-felter metadata er en normal tilstand, ikke en
+degraderet en).
+
+**Bevis for at UserDNA aldrig ændres:** `feedbackPipeline/` importerer
+ingen steder `userDna`, `queue` (kun dens `ReactionType`-*type*), eller
+noget andet modul med tilstand — verificeret ved gennemlæsning af alle
+imports; `LearningEvent`s felter indeholder strukturelt ingen
+DNA/signal-data (ingen `signals`-nøgle kan eksistere, da typen ikke
+definerer den); en sekvens af flere behandlede events akkumulerer ingen
+delt tilstand mellem kald (hvert kald til `processReactionEvent` er
+uafhængigt af alle tidligere kald).
+
+**Er milestone 100% færdig ifølge Definition of Done?**
+1. Acceptkriterier (de nye, brugerdefinerede regler) opfyldt — ja, se
+   bevisafsnittene ovenfor. 2. Tests består — ja, 103/103. 3. Ingen
+   TODO/placeholder — ja. 4. Dokumentation opdateret — ja, denne Review
+   Report plus inline-kommentarer i koden. 5. Fungerer isoleret uden
+   fremtidige milestones — ja, intet import af `userDna`, persistence/
+   `storage`, UI, eller `analytics` noget sted i `feedbackPipeline/`;
+   kun et type-import fra `queue` (M6). 6. Ingen kendte kritiske fejl —
+   ja. 7. Reviewet mod PRD/TDS/ADR — ja: navngivnings- og
+   scope-afklaringerne ovenfor er begge afgrænsninger af TDS' bredere
+   `feedback`/`FeedbackEvent`-beskrivelse, ikke ændringer af den; ADR-16
+   og ADR-17 er begge respekteret (intet fra M1-M6 er ændret; queue
+   forbliver ene ejer af positionen — `feedbackPipeline` læser aldrig
+   queue-state, kun det event queue selv har produceret). 8.
+   Demonstrerer den tilsigtede værdi — ja: beviset er ikke om `UserDNA`
+   bliver bedre (der er ingen kobling til `user-dna` overhovedet), men
+   at feedback kan registreres, valideres og afleveres til et fremtidigt
+   læringssystem uden at udføre selve læringen.
+
+**Ja — M7 er 100% færdig ifølge Definition of Done (for det scope
+brugeren faktisk satte).**
+
+**Er projektet klar til næste milestone?**
+Ja, med to åbne beslutninger at træffe før/under M8: (a) skal
+reaktions-vokabularet udvides fra tre til fem typer (kræver en ADR mod
+M6, jf. ADR-16), og (b) hvordan/hvornår `LearningEvent` beriges med den
+snapshot-/session-kontekst TDS' fulde `FeedbackEvent` forudsætter, hvis
+M8 har brug for det. Ingen af disse er afgjort her — kun gjort synlige.
 
 ---
 

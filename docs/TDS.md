@@ -889,6 +889,79 @@ kun til den nuværende kode.
   session-container) — kun at der aldrig findes to uafhængige
   beregninger af den samme position.
 
+### ADR-18 — LearningEvent beskriver observerede handlinger, ikke fortolkede præferencer
+
+- **Beslutning:** `LearningEvent` (M7's `feedbackPipeline`) beskriver
+  kun *hvad der observerbart skete* — hvilken kandidat, hvilken
+  reaktionstype, hvornår. Den indeholder ingen fortolkning af hvad
+  brugeren derved menes at foretrække (fx "brugeren liker rock", "denne
+  genre er nu at foretrække").
+- **Baggrund:** M7 gjorde `feedbackPipeline` til det eneste modul der
+  omsætter en rå reaktion til et domæneobjekt for læringssystemet
+  (M8). Uden denne ADR ville det være en naturlig, men forkert,
+  udvidelse at lade pipelinen selv gætte på betydningen af en reaktion
+  (fx udlede "genre-præference" af et `save` på en rock-sang) —
+  præcis den slags fortolkning Rule 4 allerede forbyder ("den må ikke
+  udføre læring"), men uden en ADR ville grænsen kun leve i roadmap-
+  teksten, ikke i arkitekturen.
+- **Alternativer overvejet:** (a) lad `LearningEvent` inkludere et
+  afledt felt som fx `impliedPreference` eller `signalDelta`, beregnet
+  ud fra reaktionstypen og kandidatens `TrackDNA`, for at spare `user-
+  dna` (M8) besværet med selv at fortolke; (b) lad pipelinen vægte
+  reaktioner forskelligt (fx `save` "tæller mere" end `known`) i selve
+  domæneobjektet.
+- **Hvorfor denne løsning:** Begge alternativer flytter en
+  lærings-beslutning opstrøms til et modul der pr. definition ikke må
+  lære (Rule 1/4) — og de ville gøre `LearningEvent` afhængig af
+  *hvordan* `user-dna` i øjeblikket fortolker feedback, hvilket
+  underminerer at flere, potentielt forskellige, fremtidige
+  lærings-strategier (jf. TDS' egen ambition om en `ranking`-motor der
+  kan udskiftes, jf. M5's `RankingEngine`-interface) skal kunne
+  konsumere samme, neutrale hændelse. Ved at holde `LearningEvent` til rene,
+  observerede fakta, kan `user-dna` (eller en fremtidig lærings-model)
+  frit ændre *hvordan* den fortolker en reaktion uden at
+  `feedbackPipeline` skal ændres.
+- **Konsekvenser:** Al fortolkning — hvad et `save` på en given
+  `TrackDNA` betyder for `UserDNA`s signaler — sker udelukkende i M8
+  (eller senere), aldrig i `feedbackPipeline`. `LearningEvent`s skema
+  kan derfor forblive stabilt selv hvis lærings-strategien ændrer sig
+  markant.
+
+### ADR-19 — Validering afviser, men fortolker eller normaliserer aldrig semantisk ukendte værdier
+
+- **Beslutning:** `feedbackPipeline`s validering skelner skarpt mellem
+  to ting: *syntaktisk normalisering* (fx trimme whitespace fra en
+  ellers gyldig streng) og *semantisk fortolkning* (fx gætte at
+  `"likeddet"` nok betyder `"save"`, eller stille "known" ind som
+  standard for en ukendt reaktionstype). Kun det første er tilladt.
+  Alt der ikke eksakt matcher et kendt, gyldigt værdisæt bliver afvist
+  — aldrig gættet, oversat, eller tilnærmet.
+- **Baggrund:** M7 Rule 4 tillader validering og normalisering, men
+  forbyder læring. Grænsen mellem "normalisering" og "en lille smule
+  fortolkning" er ikke selvindlysende — denne ADR gør den konkret: en
+  `reactionType` på `"like"` er ikke "tæt nok på" `"save"` til at blive
+  accepteret som det; den afvises som `invalid-reaction-type`, punktum.
+- **Alternativer overvejet:** (a) lad valideringen forsøge en
+  best-effort-oversættelse af almindelige varianter (`"like"` →
+  `"save"`, `"skip"` → `"reject"`) for at være mere tilgivende over for
+  upstream-fejl; (b) lad en ukendt reaktionstype falde tilbage til en
+  standardværdi (fx `"known"`) i stedet for at blive afvist.
+- **Hvorfor denne løsning:** Begge alternativer er en fortolkning af
+  hvad en kalder *nok* mente — det er præcis den slags gæt Rule 4
+  ("ingen læring") og hele projektets etablerede disciplin (fejlrettet
+  gentagne gange i v1: gæt på manglende/uventede data er roden til
+  runtime-fejl, ikke løsningen på dem) allerede forbyder. En afvist
+  hændelse med en præcis, navngivet grund (`invalid-reaction-type`
+  osv.) er langt mere nyttig for en fremtidig fejlfinding end en
+  hændelse der blev "reddet" ved et gæt, og som derfor ser gyldig ud,
+  men beskriver noget der aldrig faktisk skete.
+- **Konsekvenser:** En upstream-fejl (fx en fremtidig UI der sender en
+  forkert streng) bliver synlig som en afvisning med en klar grund, i
+  stedet for at blive tavst omdannet til en anden, forkert, men
+  gyldigt udseende hændelse. Dette lægger presset for korrekthed på
+  kalderen (queue/en fremtidig UI), hvor det hører hjemme — ikke på
+  `feedbackPipeline`, som ikke kan vide *hvad* kalderen egentlig mente.
+
 ---
 
 ## 11. Non-functional Requirements (NFR)
