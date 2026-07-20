@@ -1,4 +1,4 @@
-import type { LearnFromReaction, LoadUserDna, PersistLearningEvent, SaveUserDna } from '../applicationLayer';
+import type { BuildDiscoveryQueue, LearnFromReaction, LoadUserDna, PersistLearningEvent, SaveUserDna } from '../applicationLayer';
 import type { InMemoryObservationSink } from '../observability';
 import type { LearningEventRepository, TrackDnaRepository, UserDnaRepository } from '../persistence';
 
@@ -28,6 +28,7 @@ export interface AppContext {
     saveUserDna: SaveUserDna;
     persistLearningEvent: PersistLearningEvent;
     learnFromReaction: LearnFromReaction;
+    buildDiscoveryQueue: BuildDiscoveryQueue;
   };
   observationSink: InMemoryObservationSink;
 }

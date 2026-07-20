@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
+import { AppContextProvider } from './AppContextProvider';
 import { AuthCallback } from './features/auth/AuthCallback';
 import { AuthProvider, useAuth } from './features/auth/AuthContext';
 import { LoginScreen } from './features/auth/LoginScreen';
@@ -21,27 +22,29 @@ const RequireAuth = ({ children }: { children: ReactNode }) => {
 
 const App = () => (
   <AuthProvider>
-    <BrowserRouter basename={import.meta.env.BASE_URL}>
-      <Routes>
-        <Route path="/callback" element={<AuthCallback />} />
-        <Route
-          path="/"
-          element={
-            <RequireAuth>
-              <DiscoveryPage />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/music-dna"
-          element={
-            <RequireAuth>
-              <DashboardPage />
-            </RequireAuth>
-          }
-        />
-      </Routes>
-    </BrowserRouter>
+    <AppContextProvider>
+      <BrowserRouter basename={import.meta.env.BASE_URL}>
+        <Routes>
+          <Route path="/callback" element={<AuthCallback />} />
+          <Route
+            path="/"
+            element={
+              <RequireAuth>
+                <DiscoveryPage />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/music-dna"
+            element={
+              <RequireAuth>
+                <DashboardPage />
+              </RequireAuth>
+            }
+          />
+        </Routes>
+      </BrowserRouter>
+    </AppContextProvider>
   </AuthProvider>
 );
 

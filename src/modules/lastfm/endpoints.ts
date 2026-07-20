@@ -79,3 +79,24 @@ export const getTopTracksForArtist = async (artistName: string): Promise<LastFmT
     images: mapImages(track.image),
   }));
 };
+
+interface RawTag {
+  name: string;
+}
+
+interface RawTopTagsResponse {
+  toptags?: { tag?: RawTag[] };
+}
+
+const TOP_TAGS_LIMIT = 5;
+
+/** Last.fm's own free-text genre/style tags for an artist — used to feed modules/enrichment's tagBasedEnricher (Sprint 1 Discovery pipeline). */
+export const getTopTags = async (artistName: string): Promise<string[]> => {
+  const data = await lastFmGet<RawTopTagsResponse>({
+    method: 'artist.gettoptags',
+    artist: artistName,
+    autocorrect: '1',
+  });
+
+  return (data.toptags?.tag ?? []).slice(0, TOP_TAGS_LIMIT).map((tag) => tag.name);
+};

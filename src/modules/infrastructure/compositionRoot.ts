@@ -1,7 +1,11 @@
-import { LearnFromReaction, LoadUserDna, PersistLearningEvent, SaveUserDna } from '../applicationLayer';
+import { BuildDiscoveryQueue, LearnFromReaction, LoadUserDna, PersistLearningEvent, SaveUserDna } from '../applicationLayer';
+import { CandidateAggregator } from '../candidateProviders';
+import { EnrichmentPipeline, explicitMetadataEnricher, tagBasedEnricher } from '../enrichment';
 import { DEFAULT_LEARNING_STRATEGIES } from '../learningEngine';
 import { InMemoryObservationSink } from '../observability';
+import { RuleBasedRankingEngine } from '../rankingEngine';
 import type { AppContext } from './appContext';
+import { LastFmCandidateProvider } from './providers/lastFmCandidateProvider';
 import { InMemoryLearningEventRepository } from './repositories/inMemoryLearningEventRepository';
 import { InMemoryTrackDnaRepository } from './repositories/inMemoryTrackDnaRepository';
 import { InMemoryUserDnaRepository } from './repositories/inMemoryUserDnaRepository';
@@ -25,12 +29,25 @@ import { InMemoryUserDnaRepository } from './repositories/inMemoryUserDnaReposit
  * concrete implementations, M11 Rule 1) but never the `ObservationSink`
  * *interface* itself — that contract stays known only to
  * `applicationLayer/` (verified by `src/architecture.test.ts`).
+ *
+ * Product Sprint 1: also constructs the one real `LastFmCandidateProvider`
+ * (the first, and only, concrete `CandidateProvider` in the system),
+ * wraps it in a `CandidateAggregator` of one, and wires a real
+ * `EnrichmentPipeline` (the same two enrichers M4 shipped, unmodified)
+ * and `RuleBasedRankingEngine` (M5, unmodified) into the new
+ * `BuildDiscoveryQueue` use case — same construction-only role as
+ * everything else in this function (Rule 8), nothing new here changes
+ * that discipline.
  */
 export const buildAppContext = (): AppContext => {
   const userDnaRepository = new InMemoryUserDnaRepository();
   const trackDnaRepository = new InMemoryTrackDnaRepository();
   const learningEventRepository = new InMemoryLearningEventRepository();
   const observationSink = new InMemoryObservationSink();
+
+  const candidateAggregator = new CandidateAggregator([new LastFmCandidateProvider()]);
+  const enrichmentPipeline = new EnrichmentPipeline([tagBasedEnricher, explicitMetadataEnricher]);
+  const rankingEngine = new RuleBasedRankingEngine();
 
   return {
     repositories: { userDnaRepository, trackDnaRepository, learningEventRepository },
@@ -39,6 +56,7 @@ export const buildAppContext = (): AppContext => {
       saveUserDna: new SaveUserDna(userDnaRepository),
       persistLearningEvent: new PersistLearningEvent(learningEventRepository),
       learnFromReaction: new LearnFromReaction(userDnaRepository, trackDnaRepository, learningEventRepository, DEFAULT_LEARNING_STRATEGIES, observationSink),
+      buildDiscoveryQueue: new BuildDiscoveryQueue(userDnaRepository, trackDnaRepository, candidateAggregator, enrichmentPipeline, rankingEngine),
     },
     observationSink,
   };

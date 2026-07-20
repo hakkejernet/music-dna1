@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LearnFromReaction, LoadUserDna, PersistLearningEvent, SaveUserDna } from '../applicationLayer';
+import { BuildDiscoveryQueue, LearnFromReaction, LoadUserDna, PersistLearningEvent, SaveUserDna } from '../applicationLayer';
 import type { LearningEvent } from '../feedbackPipeline';
 import type { Result } from '../result';
 import { validateSignalVector, type TrackDNA } from '../trackDna';
@@ -13,7 +13,7 @@ const expectSuccess = <T>(result: Result<T, unknown>): T => {
 };
 
 describe('buildAppContext — Composition Root builds the whole system (M11 Rule 3)', () => {
-  it('constructs all three repositories and all four use cases', () => {
+  it('constructs all three repositories and all five use cases', () => {
     const appContext = buildAppContext();
 
     expect(appContext.repositories.userDnaRepository).toBeDefined();
@@ -24,6 +24,7 @@ describe('buildAppContext — Composition Root builds the whole system (M11 Rule
     expect(appContext.useCases.saveUserDna).toBeInstanceOf(SaveUserDna);
     expect(appContext.useCases.persistLearningEvent).toBeInstanceOf(PersistLearningEvent);
     expect(appContext.useCases.learnFromReaction).toBeInstanceOf(LearnFromReaction);
+    expect(appContext.useCases.buildDiscoveryQueue).toBeInstanceOf(BuildDiscoveryQueue);
   });
 
   it('wires the same repository instances into both the raw repositories map and the use cases that need them', async () => {
@@ -75,7 +76,13 @@ describe('AppContext — describes dependencies only, not runtime state (M11 Rul
     // not runtime state, so it belongs here under the same M11 Rule 6.
     expect(Object.keys(appContext).sort()).toEqual(['observationSink', 'repositories', 'useCases']);
     expect(Object.keys(appContext.repositories).sort()).toEqual(['learningEventRepository', 'trackDnaRepository', 'userDnaRepository']);
-    expect(Object.keys(appContext.useCases).sort()).toEqual(['learnFromReaction', 'loadUserDna', 'persistLearningEvent', 'saveUserDna']);
+    expect(Object.keys(appContext.useCases).sort()).toEqual([
+      'buildDiscoveryQueue',
+      'learnFromReaction',
+      'loadUserDna',
+      'persistLearningEvent',
+      'saveUserDna',
+    ]);
   });
 
   it('wires the same InMemoryObservationSink instance into both AppContext.observationSink and LearnFromReaction (M14)', async () => {

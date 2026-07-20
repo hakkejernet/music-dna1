@@ -2559,6 +2559,188 @@ til den nye arkitektur er en separat, fremtidig produktfase.
 
 ---
 
+## Product Sprint 1 — Discovery på den nye arkitektur, end-to-end
+
+**Scope-track (afklaret med brugeren før implementering):** M15
+afsluttede v1-pipelinens sidste mock-fallback, men lod selve
+Discovery-siden fortsætte på v1-implementeringen. Sprint 1 er den
+migration, M15's eget Review Report kaldte "en separat, fremtidig
+produktfase" — Discovery-siden er nu koblet helt om til den nye
+domænearkitektur (M1-M15), og hele v1-pipelinen er slettet
+(`recommendations`, `ranking`, `preferences`, `diagnostics`, `history`
+samt UI-komponenterne `DebugPanel`/`RejectReasonPanel`/`WhyPanel`/
+`DiscoveryCard`/`PreviewPlayer`/`OpenInSpotifyButton`), efter at nul
+resterende referencer til hver blev verificeret. Ti bindende regler (ét
+kort ad gangen, ingen lister; fire handlinger — Gem/Spring over/Kender
+allerede/Åbn i Spotify; kort "hvorfor denne"-forklaring baseret på
+eksisterende ranking-signaler, ingen AI-genereret tekst; præcis
+tom-tilstand-tekst når intet er tilbage, ingen placeholders; bevaret
+learning; bevaret observability; integrationstests for hele flowet)
+styrede det faktiske arbejde. Ingen nye providers, dashboards,
+settings, profiler eller sociale funktioner.
+
+**Screenshots:** sendt direkte til brugeren (Playwright-render af de
+rigtige, urørte komponenter med hånd-bygget fixture-data — der findes
+ingen Spotify/Last.fm-credentials i implementeringsmiljøet, så en ægte
+login-session kunne ikke gennemføres der; det midlertidige
+render-scaffold blev slettet igen umiddelbart efter og aldrig committet).
+
+### Hele Discovery-flowet
+
+```
+Spotify Library (getTopArtists + storage.getAllTracks)
+  → buildLibrarySnapshot()                    [infrastructure, ny]
+  → BuildDiscoveryQueue.execute()              [applicationLayer, ny use case]
+      → ensureUserDna()  → buildColdStartUserDna() (M2, urørt) hvis første besøg
+      → CandidateAggregator.fetchAll()          (M3, urørt) → LastFmCandidateProvider (ny, infrastructure)
+      → EnrichmentPipeline.enrich() pr. kandidat (M4, urørt — samme 2 enrichers)
+      → trackDnaRepository.save() pr. TrackDNA  (så senere reaktion kan læres af den)
+      → RuleBasedRankingEngine.rank()           (M5, urørt)
+      → RecommendationQueue.create()            (M6, urørt)
+  → DiscoveryPage viser queue.current()
+  → Bruger reagerer (❤️/❌/👀) → queue.react()   (M6, urørt)
+      → processReactionEvent()                  (M7, urørt)
+      → LearnFromReaction.execute()             (M8/M10/M14, urørt) → UserDNA opdateres + Observability (best effort)
+  → ▶ Åbn i Spotify: modules/spotifyLink (urørt), ingen reaktion, ingen queue-ændring
+```
+
+**Nye filer:** `LastFmCandidateProvider` (`src/modules/infrastructure/providers/`)
+— den ene, nødvendige `CandidateProvider`-implementation M3 definerede men
+aldrig fyldte ud, selvforsynende (læser selv Spotifys top-kunstnere via
+`modules/spotify`, kalder Last.fm for lignende kunstnere/toptracks/tags —
+`CandidateRequest` blev ikke ændret, `{ limit }` er stadig det hele).
+`getTopTags()` tilføjet til `modules/lastfm/endpoints.ts` (samme klient,
+ét ekstra read-kald, `artist.gettoptags`) så `tagBasedEnricher` (M4,
+urørt) faktisk får rigtige tags at matche på — uden det ville hver
+kandidat fra Last.fm enrichet til en fuldstændig neutral TrackDNA, og
+"hvorfor denne"-teksten ville aldrig kunne vise noget rigtigt.
+`buildLibrarySnapshot()` (`src/modules/infrastructure/`) — oversætter
+`modules/spotify` + `modules/storage`s allerede-eksisterende data til
+`LibrarySnapshot` (M2's egen, aldrig udfyldte mapping). `BuildDiscoveryQueue`
+(`src/modules/applicationLayer/useCases/`) — den nye workflow-use-case,
+bygget efter nøjagtig samme mønster som M10's fire eksisterende
+Application Services (ingen domænelogik, kun sekvensering af allerede
+byggede dele); bootstrapper en cold-start `UserDNA` selv, hvis brugeren
+ikke har en endnu, i stedet for at fejle. `AppContextProvider`
+(`src/AppContextProvider.tsx`, React) — se afklaringen nedenfor.
+`RecommendationCard` — ét-korts UI med inline "hvorfor"-tekst, erstatter
+`DiscoveryCard`+`WhyPanel`.
+
+**Om `AppContextProvider` er den permanente React composition root, eller
+en midlertidig løsning (præcisering efter brugerens review):**
+`AppContextProvider` er tænkt som den **permanente** React-side
+composition root — ikke en midlertidig stub. Den indeholder selv nul
+domænelogik og ved intet om, hvad `buildAppContext()` konkret bygger:
+den kalder funktionen præcis én gang pr. browser-session (via en lazy
+`useRef`) og videregiver resultatet gennem React context. Al faktisk
+udskiftelighed — f.eks. en fremtidig persisterende `UserDnaRepository`
+der afløser `InMemoryUserDnaRepository` — sker udelukkende inde i
+`compositionRoot.ts`s `buildAppContext()`-funktion (M11's egen,
+etablerede Composition Root), som allerede er det ene sted konkrete
+implementationer må konstrueres. `AppContextProvider` selv ville derfor
+ikke skulle ændres én linje, når det sker: den kender kun `AppContext`
+-typen (grænsefladen), aldrig hvad der er bag den. Den ene forudsætning
+dette hviler på: en fremtidig repository-implementation skal forblive
+lige så "synkron at konstruere, asynkron at bruge" som de nuværende
+InMemory-repositories og `Repository<T>`-kontrakten allerede er (alle
+metoder er `async`, selve konstruktøren er det ikke) — præcis samme
+mønster `modules/storage`s egen `getDb()` allerede bruger til en rigtig
+IndexedDB-forbindelse. Skulle en fremtidig persistering kræve en
+grundlæggende anderledes, blokerende bootstrap, ville det være en reel
+arkitekturændring (og dermed kræve en ny ADR) — men intet i Sprint 1's
+scope eller den nuværende kontrakt peger i den retning.
+
+**"Hvorfor denne?" (Rule 4):** bygget udelukkende af
+`RankedCandidate.explanations` (ranking-engine's egen `ScoreBreakdown` →
+`explainBreakdown()`, M5, urørt), trimmet til de 2 første. Ingen AI,
+ingen ny tekstgenerering — kun eksisterende signaler. Når intet signal
+slår igennem, vises én fast, hardcoded linje ("Ikke nok data endnu til
+en detaljeret forklaring."), selv ikke AI-genereret.
+
+**4 handlinger (Rule 3):** ❤️ Gem, ❌ Spring over, 👀 Kender allerede
+(alle tre → `queue.react()` → learning), ▶ Åbn i Spotify (ren `<a>`-link
+via `modules/spotifyLink`, urørt, påvirker ikke køen eller learning).
+
+**Tom tilstand (Rule 5):** vises præcis teksten "Jeg har ikke flere gode
+forslag lige nu." når `queue.current()` er `null` — ingen
+auto-genhentning, ingen placeholder.
+
+**Kendte begrænsninger:**
+- In-memory persistence only: ingen ny persistent repository blev
+  bygget (ville selv være en arkitekturændring) — al learning/UserDNA
+  nulstilles ved en fuld sideopdatering, ikke ved navigation i appen
+  (se `AppContextProvider`-afklaringen ovenfor for hvorfor det er en
+  ren infrastructure-udskiftning, ikke en React-ombygning, når det
+  skal løses).
+- Signaldækning fra Last.fm er sparsom: kun genre (via nye
+  `getTopTags`) og til dels mainstream har nogen chance for at ramme;
+  `explicitness`/`songLength` forbliver neutrale for Last.fm-kilden
+  (ingen sådanne felter findes der) — "hvorfor"-teksten vil ofte kun
+  vise genre-match eller den faste fallback-linje.
+- `getTopArtists()` er Spotifys live top-kunstnere, ikke det synkede
+  bibliotek — `buildLibrarySnapshot()`s `savedTracks`-halvdel kommer fra
+  `storage.getAllTracks()` (synkede playlist-tracks, samme kilde v1
+  dashboardet allerede brugte).
+- Ingen ægte Spotify track-ID fra Last.fm-kandidater — "Åbn i Spotify"
+  går altid via søgning/matching (`modules/spotifyLink`, urørt), ikke
+  et direkte link.
+
+**Hvad der bevidst IKKE blev bygget:**
+- Ingen ny provider-*kilde* (kun Last.fm, allerede etableret i M15) —
+  kun den nødvendige nye-arkitektur-adapter for den.
+- Ingen ny Enricher for `mainstream`/`songLength` — ville have gjort
+  "hvorfor"-teksten rigere, men er ekstra scope udover det nødvendige.
+- Ingen reject-reason-trin (v1 havde det) — Sprint 1's 4 handlinger
+  nævner det ikke.
+- Ingen debug/diagnostics-overflade for den nye pipeline (v1's
+  DebugPanel er slettet, ikke genbygget) — ville være tæt på et
+  "dashboard".
+- Ingen auto-genhentning når køen bliver tom.
+
+**Hvilke tests blev kørt?**
+13 nye enheds-/integrationstests: `LastFmCandidateProvider` (6),
+`buildLibrarySnapshot` (3), `BuildDiscoveryQueue` (4). 3 nye
+ende-til-ende-tests (`discoveryFlow.test.ts`) gennem den rigtige, urørte
+`buildAppContext()`: rigtig kandidat → rigtig ranking → rigtig kø →
+reaktion → rigtig learning (UserDNA-version stiger) → rigtig
+Observability (`RecommendationAccepted`/`RecommendationKnown`/
+`LearningApplied` findes i `observationSink.getAll()`) — samt beviser at
+et tomt providerresultat giver en genuint tom kø, aldrig fabrikerede
+data. `npm run test` → 260/260 grønne (244 uændrede fra M1-M15, minus 7
+slettede v1-tests, plus 16 nye plus 7 opdaterede). `npx tsc -b`,
+`npm run lint`, `npm run build` alle grønne.
+
+**Bevis for ingen arkitekturændring:** `CandidateProvider`/
+`RankingEngine`/`LearningEngine`/`Observability`-kontrakterne er alle
+byte-for-byte uændrede siden M15 (`git diff daf3e8d` for
+`src/modules/candidateProviders/types.ts`, `rankingEngine/types.ts`,
+`learningEngine/`, `observability/` → 0 linjer i typedefinitionerne) —
+kun nye, konkrete implementationer og én ny Application Service
+tilføjet, samme mønster M10/M11 allerede etablerede. Ingen nye ADR'er
+var derfor nødvendige.
+
+**Er milestone 100% færdig ifølge Definition of Done?**
+1. Acceptkriterier opfyldt — ja, se afsnittene ovenfor. 2. Tests består
+   — ja, 260/260. 3. Ingen TODO/placeholder — ja. 4. Dokumentation
+   opdateret — ja, denne Review Report plus inline-kommentarer. 5.
+   Fungerer isoleret — ja, ingen domænekontrakter ændret. 6. Ingen
+   kendte kritiske fejl. 7. Reviewet mod PRD/TDS/ADR — ADR-16 til
+   ADR-32 alle respekteret, ingen ny ADR nødvendig. 8. Demonstrerer den
+   tilsigtede værdi — ja: en bruger kan nu faktisk finde ny musik via
+   den arkitektur, der blev bygget over 15 milestones, ét kort ad
+   gangen, med en ærlig forklaring og fire enkle handlinger.
+
+**Ja — Product Sprint 1 er 100% færdig ifølge Definition of Done.**
+
+**Er projektet klar til næste sprint?**
+Ja. Discovery-siden kører nu udelukkende på den nye arkitektur; v1 er
+fuldstændig fjernet. Åbne punkter til en fremtidig sprint: rigere
+signaldækning fra flere/bedre kilder, og en persistent (ikke
+in-memory-only) repository-implementation, hvis brugerdata skal
+overleve en sideopdatering.
+
+---
+
 ## Historik: oprindelig M11 (ikke udført)
 
 **Scope-note tilføjet efter M3 (afventer godkendelse, ikke selvstændigt

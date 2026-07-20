@@ -1,29 +1,32 @@
 interface Props {
   onSave: () => void;
-  onReject: () => void;
+  onSkip: () => void;
   onKnown: () => void;
-  onNext: () => void;
-  onWhy: () => void;
+  spotifyHref: string | null;
 }
 
-export const ActionBar = ({ onSave, onReject, onKnown, onNext, onWhy }: Props) => (
+/** Product Sprint 1 Rule 3 — exactly these four actions, nothing else (no "why" toggle, no reject-reason step). */
+export const ActionBar = ({ onSave, onSkip, onKnown, spotifyHref }: Props) => (
   <div className="action-bar">
     <div className="action-bar__row">
       <button type="button" className="action-btn action-btn--save" onClick={onSave}>
         <span aria-hidden="true">❤️</span> Gem
       </button>
-      <button type="button" className="action-btn action-btn--reject" onClick={onReject}>
-        <span aria-hidden="true">❌</span> Afvis
+      <button type="button" className="action-btn action-btn--skip" onClick={onSkip}>
+        <span aria-hidden="true">❌</span> Spring over
       </button>
       <button type="button" className="action-btn action-btn--known" onClick={onKnown}>
-        <span aria-hidden="true">👀</span> Kendte allerede
+        <span aria-hidden="true">👀</span> Kender allerede
       </button>
-      <button type="button" className="action-btn action-btn--next" onClick={onNext}>
-        <span aria-hidden="true">➡</span> Næste
-      </button>
+      {spotifyHref ? (
+        <a className="action-btn action-btn--spotify" href={spotifyHref} target="_blank" rel="noopener noreferrer">
+          <span aria-hidden="true">▶</span> Åbn i Spotify
+        </a>
+      ) : (
+        <span className="action-btn action-btn--spotify action-btn--disabled" aria-disabled="true">
+          <span aria-hidden="true">▶</span> Åbn i Spotify
+        </span>
+      )}
     </div>
-    <button type="button" className="why-link" onClick={onWhy}>
-      Hvorfor denne?
-    </button>
   </div>
 );
