@@ -208,6 +208,7 @@ CHANGELOG.md).
 - `npm run dev` — dev-server
 - `npm run build` — typecheck + produktionsbuild
 - `npm run lint` — oxlint
+- `npm run test` — Vitest (enhedstests for `src/modules/**/*.test.ts`)
 - `npm run preview` — preview af produktionsbuild
 
 ## Deployment (GitHub Pages)

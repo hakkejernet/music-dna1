@@ -61,6 +61,39 @@ kronologisk log af hvad der faktisk blev gjort og verificeret, ikke en
 plan for hvad der skulle gøres. Godkendelse af en Review Report er
 selve porten der åbner for den næste milestone.
 
+## Test-standard
+
+Etableret efter M1, før M2, som en procesbeslutning — ikke sin egen
+milestone, men bindende for alle fra M2 og frem (Definition of Done
+punkt 2, "alle relevante tests består", forudsætter dette).
+
+- **Test-runner:** [Vitest](https://vitest.dev), konfigureret direkte i
+  `vite.config.ts` (via `vitest/config`s `defineConfig`, som er en
+  overbygning på Vites egen — ingen parallel config-fil). Valgt fordi
+  det er den native løsning for et Vite-projekt: den løser
+  extensionless imports helt identisk med appens egen build (samme
+  problem der gjorde M1's midlertidige verifikationsscript nødt til at
+  bundles med `esbuild` for at kunne køre under almindelig Node), har
+  en Jest-kompatibel `describe`/`it`/`expect`-API, og kræver ingen
+  separat transform-konfiguration.
+- **Konvention:** enhedstests ligger **side om side** med den kode de
+  tester, navngivet `<modul>.test.ts` (fx
+  `src/modules/trackDna/validateSignalVector.test.ts`) — ikke i en
+  separat `tests/`-mappe. Dette holder en tests relevans synlig uden at
+  skulle lede efter den.
+- **Omfang:** dette er enheds-/logik-tests af ren, deterministisk
+  forretningslogik (moduler uden DOM/netværk) — det er *ikke* en
+  udskiftning af de eksisterende Playwright-baserede
+  integrationsverifikationer af UI-flows, som forbliver den rigtige
+  metode til det de allerede har bevist gennem hele v1-arbejdet.
+- **Kørsel:** `npm run test` (kører `vitest run`, én gang, ingen
+  watch-mode — CI-/DoD-gate-venligt). Skal bestå som del af Definition
+  of Done punkt 2 for enhver milestone med forretningslogik.
+- **Eksempel etableret:** M1's tidligere midlertidige verifikations-
+  script er konverteret til en permanent test-fil
+  (`src/modules/trackDna/validateSignalVector.test.ts`, 14 tests) som
+  skabelon for hvordan fremtidige milestoners tests skal se ud.
+
 ---
 
 ## Afhængighedsoversigt
