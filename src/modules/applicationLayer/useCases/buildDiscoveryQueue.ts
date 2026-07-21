@@ -4,7 +4,8 @@ import type { EnrichedCandidate } from '../../enrichment';
 import { EnrichmentPipeline } from '../../enrichment';
 import type { TrackDnaRepository, UserDnaRepository } from '../../persistence';
 import { RecommendationQueue } from '../../queue';
-import type { RankingEngine } from '../../rankingEngine';
+import { SIGNAL_GROUPS } from '../../rankingEngine';
+import type { RankedCandidate, RankingEngine } from '../../rankingEngine';
 import { success, type Result } from '../../result';
 import { buildColdStartUserDna, type LibrarySnapshot, type UserDNA } from '../../userDna';
 
@@ -120,9 +121,75 @@ export class BuildDiscoveryQueue {
       if (enriched) topEnriched.push(enriched);
     }
 
+    // M24 — TEMPORARY diagnostic trace (Recommendation Trace & Candidate
+    // Audit). Read-only: touches no candidate selection, no ranking, no
+    // persistence. Logs, per recommendation, exactly what the M24
+    // investigation asked for — seed chain, raw-pool position, and the
+    // 4 per-bucket scores — so it's possible to see WHY a given track
+    // survived the pipeline. Meant to be removed again once the audit
+    // this milestone requested is done.
+    this.logRecommendationTrace(candidates, persistedByCandidateId, rankedPool, topRanked);
+
     const queue = RecommendationQueue.create(topRanked);
 
     return success({ queue, enrichedCandidates: topEnriched });
+  }
+
+  /** M24 diagnostic-only — see the block comment at its one call site. Never throws: a logging failure must never break Discovery. */
+  private logRecommendationTrace(
+    rawPool: readonly { candidateId: string }[],
+    persistedByCandidateId: ReadonlyMap<string, EnrichedCandidate>,
+    rankedPool: readonly RankedCandidate[],
+    topRanked: readonly RankedCandidate[],
+  ): void {
+    try {
+      const rawPoolPositionById = new Map(rawPool.map((candidate, index) => [candidate.candidateId, index]));
+
+      const buildTraceEntry = (ranked: RankedCandidate) => {
+        const enriched = persistedByCandidateId.get(ranked.candidateRef);
+        if (!enriched) return null;
+
+        const rawMetadata = enriched.candidate.contributions[0]?.rawMetadata;
+        const provenance = typeof rawMetadata === 'object' && rawMetadata !== null ? (rawMetadata as Record<string, unknown>) : {};
+        const tags = Array.isArray(provenance.tags) ? (provenance.tags as string[]) : [];
+        // Which of the 6 genre keywords the tag-based enricher actually
+        // matched (value === 1) for THIS track — as opposed to merely
+        // having a (possibly all-zero) reading at all.
+        const matchedGenreKeywords = SIGNAL_GROUPS.genreMatch.filter((key) => enriched.trackDna.signals[key].value === 1);
+
+        return {
+          title: enriched.candidate.title,
+          artist: enriched.candidate.artists[0] ?? '(ukendt artist)',
+          candidateId: ranked.candidateRef,
+          seedArtist: typeof provenance.seedArtist === 'string' ? provenance.seedArtist : null,
+          similarArtist: typeof provenance.similarArtist === 'string' ? provenance.similarArtist : null,
+          rawPoolPosition: rawPoolPositionById.get(ranked.candidateRef) ?? null,
+          score: ranked.score,
+          genreScore: ranked.scoreBreakdown.genreMatch,
+          mainstreamScore: ranked.scoreBreakdown.mainstreamMatch,
+          explicitScore: ranked.scoreBreakdown.explicitMatch,
+          durationScore: ranked.scoreBreakdown.durationMatch,
+          tags,
+          matchedGenreKeywords,
+          // score === 0 means every bucket had zero combined confidence —
+          // this candidate's position in the queue came entirely from
+          // RuleBasedRankingEngine's candidateRef tie-break, not from any
+          // taste signal. See M24 root-cause analysis.
+          survivedByTieBreakOnly: ranked.score === 0,
+        };
+      };
+
+      const top20Trace = rankedPool.slice(0, 20).map(buildTraceEntry).filter((entry) => entry !== null);
+      console.debug('[M24 trace] Top 20 rangerede kandidater før RecommendationQueue bygges:', top20Trace);
+
+      for (const ranked of topRanked) {
+        const entry = buildTraceEntry(ranked);
+        if (!entry) continue;
+        console.debug(`[M24 trace] Anbefaling "${entry.title}" af ${entry.artist}${entry.survivedByTieBreakOnly ? ' — INGEN signal-overlap, valgt kun via tie-break' : ''}:`, entry);
+      }
+    } catch (error) {
+      console.warn('[M24 trace] Diagnostisk logging fejlede (påvirker ikke Discovery):', error);
+    }
   }
 
   /** Never fails on "no UserDNA yet" — that's the expected first-run state, resolved by building and saving a cold-start one instead of returning UserDnaNotFound. */

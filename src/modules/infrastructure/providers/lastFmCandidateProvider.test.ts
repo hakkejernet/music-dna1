@@ -58,7 +58,14 @@ describe('LastFmCandidateProvider — real candidates from a real, self-containe
           {
             providerName: 'lastfm',
             externalIds: { lastfmTrackId: 'track-svefn' },
-            rawMetadata: { tags: ['dream pop', 'post-rock'], playcount: 500_000, listeners: 500_000, similarArtistMatch: 0.9 },
+            rawMetadata: {
+              tags: ['dream pop', 'post-rock'],
+              playcount: 500_000,
+              listeners: 500_000,
+              similarArtistMatch: 0.9,
+              seedArtist: 'Radiohead',
+              similarArtist: 'Sigur Ros',
+            },
           },
         ],
       },

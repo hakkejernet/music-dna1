@@ -24,6 +24,8 @@ const MAX_TRACKS_PER_ARTIST = 8;
 interface CandidateArtist {
   name: string;
   match: number;
+  /** M24 diagnostic-only: the Spotify seed artist whose similar-artist lookup produced this artist's best match — lets a trace reconstruct "which top-artist started this chain." Never read by enrichment or ranking. */
+  seedArtist: string;
 }
 
 /**
@@ -71,16 +73,17 @@ export class LastFmCandidateProvider implements CandidateProvider {
     const results = await Promise.allSettled(seedNames.map((seed) => getSimilarArtists(seed)));
 
     const byName = new Map<string, CandidateArtist>();
-    for (const result of results) {
-      if (result.status === 'rejected') continue;
+    results.forEach((result, index) => {
+      if (result.status === 'rejected') return;
+      const seedArtist = seedNames[index];
       for (const artist of result.value.slice(0, MAX_SIMILAR_PER_SEED)) {
         const key = artist.name.toLowerCase();
         const existing = byName.get(key);
         if (!existing || artist.match > existing.match) {
-          byName.set(key, { name: artist.name, match: artist.match });
+          byName.set(key, { name: artist.name, match: artist.match, seedArtist });
         }
       }
-    }
+    });
     return [...byName.values()];
   }
 
@@ -121,7 +124,15 @@ export class LastFmCandidateProvider implements CandidateProvider {
             {
               providerName: this.providerName,
               externalIds: { lastfmTrackId: track.id },
-              rawMetadata: { tags, playcount: track.playcount, listeners: track.listeners, similarArtistMatch: artist.match },
+              rawMetadata: {
+                tags,
+                playcount: track.playcount,
+                listeners: track.listeners,
+                similarArtistMatch: artist.match,
+                // M24 diagnostic-only provenance — never read by any enricher or by ranking.
+                seedArtist: artist.seedArtist,
+                similarArtist: artist.name,
+              },
             },
           ],
         });
