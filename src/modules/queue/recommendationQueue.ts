@@ -6,6 +6,12 @@ export interface ReactionResult {
   queue: RecommendationQueue;
 }
 
+/** The plain-data shape of a queue's own state — everything `restore()` needs to reconstruct an equivalent instance (M20). */
+export interface RecommendationQueueSnapshot {
+  items: readonly RankedCandidate[];
+  cursor: number;
+}
+
 /**
  * Owns exactly one thing (M6 Rule 1): position within an already-ranked
  * sequence. It receives `RankedCandidate[]` already sorted by `ranking`
@@ -44,6 +50,24 @@ export class RecommendationQueue {
    */
   static create(rankedCandidates: readonly RankedCandidate[]): RecommendationQueue {
     return new RecommendationQueue(Object.freeze([...rankedCandidates]), 0);
+  }
+
+  /**
+   * M20: reconstructs a queue at a specific position rather than always
+   * starting at 0 — the one thing `create()` deliberately doesn't do,
+   * needed to resume a persisted session exactly where it left off.
+   * `cursor` is clamped the same way every other method already caps
+   * position (never negative, never past `items.length`), so a
+   * corrupted or stale stored value can't produce an invalid queue.
+   */
+  static restore(items: readonly RankedCandidate[], cursor: number): RecommendationQueue {
+    const clampedCursor = Math.min(Math.max(cursor, 0), items.length);
+    return new RecommendationQueue(Object.freeze([...items]), clampedCursor);
+  }
+
+  /** M20: the plain-data view of this queue's own state, for a caller that needs to persist and later `restore()` it — read-only, never a way to mutate this instance. */
+  toSnapshot(): RecommendationQueueSnapshot {
+    return { items: this.items, cursor: this.cursor };
   }
 
   /** The candidate currently up for review, or `null` if the queue is exhausted (M6 Rule 7: a normal value, never a thrown error). */

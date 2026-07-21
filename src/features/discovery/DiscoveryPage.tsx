@@ -10,6 +10,7 @@ import { getInstantSpotifyUrl, resolveSpotifyTrackUrl } from '../../modules/spot
 import { useAuth } from '../auth/AuthContext';
 import { ActionBar } from './components/ActionBar';
 import { RecommendationCard } from './components/RecommendationCard';
+import { loadDiscoverySession, saveDiscoverySession } from './discoverySessionStorage';
 
 /** How many real candidates one Spotify-Library → Candidate Provider → Ranking pass fetches (Sprint 1 Rule 1) — a fixed, small batch, not a paginated feed. */
 const DISCOVERY_LIMIT = 15;
@@ -38,6 +39,15 @@ export const DiscoveryPage = () => {
   // needs to trigger a render itself.
   const shownCandidateIds = useRef<Set<string>>(new Set());
 
+  /** M20: writes the session that `loadDiscoverySession()` will look for on the next visit — everything Rule 2 asks for, plus the userId a restore must match. */
+  const persistSession = (forUserId: string, queueToSave: RecommendationQueue, enrichedMap: ReadonlyMap<string, EnrichedCandidate>) => {
+    const { items, cursor } = queueToSave.toSnapshot();
+    saveDiscoverySession(
+      { userId: forUserId, items: [...items], cursor, enriched: [...enrichedMap], shownCandidateIds: [...shownCandidateIds.current] },
+      new Date(),
+    );
+  };
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -45,6 +55,20 @@ export const DiscoveryPage = () => {
         const user = await getCurrentUser();
         if (cancelled) return;
         setUserId(user.id);
+
+        // M20 Rule 3: resume exactly where the user left off if a valid,
+        // non-expired session exists for this same Spotify user — a
+        // stored session for a different account (same browser, a
+        // different login) is not "valid" for this user and falls
+        // through to a fresh fetch below, same as no session at all.
+        const restored = loadDiscoverySession(new Date());
+        if (restored && restored.userId === user.id) {
+          if (cancelled) return;
+          shownCandidateIds.current = new Set(restored.shownCandidateIds);
+          setEnrichedById(new Map(restored.enriched));
+          setQueue(RecommendationQueue.restore(restored.items, restored.cursor));
+          return;
+        }
 
         const snapshot = await buildLibrarySnapshot();
         if (cancelled) return;
@@ -59,8 +83,10 @@ export const DiscoveryPage = () => {
         for (const enriched of result.value.enrichedCandidates) {
           shownCandidateIds.current.add(enriched.candidate.candidateId);
         }
+        const enrichedMap = new Map(result.value.enrichedCandidates.map((enriched) => [enriched.candidate.candidateId, enriched]));
         setQueue(result.value.queue);
-        setEnrichedById(new Map(result.value.enrichedCandidates.map((enriched) => [enriched.candidate.candidateId, enriched])));
+        setEnrichedById(enrichedMap);
+        persistSession(user.id, result.value.queue, enrichedMap);
       } catch (error) {
         // Bugfix M16: without this, any thrown error in the load chain
         // (e.g. getCurrentUser() on an expired/missing Spotify session)
@@ -147,8 +173,10 @@ export const DiscoveryPage = () => {
       for (const enriched of result.value.enrichedCandidates) {
         shownCandidateIds.current.add(enriched.candidate.candidateId);
       }
+      const mergedEnriched = new Map([...enrichedById, ...result.value.enrichedCandidates.map((e) => [e.candidate.candidateId, e] as const)]);
       setQueue(result.value.queue);
-      setEnrichedById((previous) => new Map([...previous, ...result.value.enrichedCandidates.map((e) => [e.candidate.candidateId, e] as const)]));
+      setEnrichedById(mergedEnriched);
+      persistSession(user.id, result.value.queue, mergedEnriched);
     } catch (error) {
       if (error instanceof SpotifyAuthError) {
         logout();
@@ -178,6 +206,8 @@ export const DiscoveryPage = () => {
       void fetchNextBatch();
     } else {
       setQueue(nextQueue);
+      // M20 Rule 1: persist after every action so a reload resumes here, not from scratch.
+      if (userId) persistSession(userId, nextQueue, enrichedById);
     }
   };
 

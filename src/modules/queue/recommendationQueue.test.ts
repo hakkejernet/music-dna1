@@ -178,3 +178,44 @@ describe('RecommendationQueue — feedback is returned only as events (M6 Rule 5
     expect(Object.keys(event ?? {}).sort()).toEqual(['candidateRef', 'reactionType', 'trackDnaRef']);
   });
 });
+
+describe('RecommendationQueue — toSnapshot()/restore() round-trip (M20)', () => {
+  it('toSnapshot() reports the exact items and cursor the queue was built with', () => {
+    const queue = RecommendationQueue.create(THREE_RANKED).next();
+    const snapshot = queue.toSnapshot();
+
+    expect(snapshot.items).toEqual(THREE_RANKED);
+    expect(snapshot.cursor).toBe(1);
+  });
+
+  it('restore() reconstructs a queue that behaves identically to the one it was snapshotted from', () => {
+    const original = RecommendationQueue.create(THREE_RANKED).next();
+    const { items, cursor } = original.toSnapshot();
+
+    const restored = RecommendationQueue.restore(items, cursor);
+
+    expect(restored.current()).toEqual(original.current());
+    expect(restored.remaining()).toBe(original.remaining());
+    expect(restored.next().current()?.candidateRef).toBe('c3');
+  });
+
+  it('restore() clamps a cursor beyond the end instead of producing an invalid position', () => {
+    const restored = RecommendationQueue.restore(THREE_RANKED, 999);
+    expect(restored.current()).toBeNull();
+    expect(restored.remaining()).toBe(0);
+  });
+
+  it('restore() clamps a negative cursor up to 0 instead of producing an invalid position', () => {
+    const restored = RecommendationQueue.restore(THREE_RANKED, -5);
+    expect(restored.current()?.candidateRef).toBe('c1');
+  });
+
+  it('restore() takes its own frozen copy — mutating the array passed in afterward never affects the queue', () => {
+    const items = [makeRanked('c1', 90), makeRanked('c2', 70)];
+    const restored = RecommendationQueue.restore(items, 0);
+
+    items.push(makeRanked('intruder', 999));
+
+    expect(restored.remaining()).toBe(2);
+  });
+});
