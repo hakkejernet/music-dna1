@@ -489,6 +489,13 @@
   opacity: 0.5;
 }
 
+.discovery-card__evidence-label {
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+  margin: 0;
+}
+
 .discovery-card__why {
   color: var(--text-muted);
   font-size: 13px;

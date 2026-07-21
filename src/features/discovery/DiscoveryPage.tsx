@@ -11,6 +11,7 @@ import { useAuth } from '../auth/AuthContext';
 import { ActionBar } from './components/ActionBar';
 import { RecommendationCard } from './components/RecommendationCard';
 import { clearDiscoverySession, loadDiscoverySession, saveDiscoverySession } from './discoverySessionStorage';
+import { classifyEvidence } from './evidenceTier';
 
 /** How many real candidates one Spotify-Library → Candidate Provider → Ranking pass fetches (Sprint 1 Rule 1) — a fixed, small batch, not a paginated feed. */
 const DISCOVERY_LIMIT = 15;
@@ -222,6 +223,8 @@ export const DiscoveryPage = () => {
   };
 
   const why = useMemo(() => current?.explanations.slice(0, 2) ?? [], [current]);
+  /** M25: how much evidence backed this recommendation's score — never how confident the system is that it's a good song (VISION.md). */
+  const evidenceTier = useMemo(() => classifyEvidence(current?.score ?? 0), [current]);
 
   if (loadError) {
     return (
@@ -259,7 +262,7 @@ export const DiscoveryPage = () => {
 
       {lastAction && <p className="discovery__last-action">Sidste handling: {lastAction}</p>}
 
-      <RecommendationCard title={currentCandidate.title} artists={currentCandidate.artists} why={why} />
+      <RecommendationCard title={currentCandidate.title} artists={currentCandidate.artists} why={why} evidenceTier={evidenceTier} />
 
       <ActionBar
         onSave={() => handleReaction('save')}
