@@ -21,8 +21,15 @@ export interface DiscoveryQueueResult {
  * no extra network calls, it just lets more of that already-computed
  * pool through the provider's own final slice, which is what makes a
  * second, non-repeating batch possible from the same seed artists.
+ *
+ * M21: raised from 100 to 500 to match LastFmCandidateProvider's own
+ * expanded internal ceiling (up to 640 raw candidates before dedup,
+ * up from 75) — this constant was already the second half of the same
+ * bottleneck M19 partially addressed: even a provider computing
+ * hundreds of candidates would still only ever return the first 100 of
+ * them, because that's all this use case asked for.
  */
-const CANDIDATE_POOL_SIZE = 100;
+const CANDIDATE_POOL_SIZE = 500;
 
 /**
  * Product Sprint 1's one new workflow: "Spotify Library → Candidate

@@ -61,6 +61,7 @@ class FakeTrackDnaRepository implements TrackDnaRepository {
 /** A CandidateProvider test double — the only fake in this suite; CandidateAggregator, EnrichmentPipeline, and RuleBasedRankingEngine below are all the real, unmodified implementations. */
 class FakeCandidateProvider implements CandidateProvider {
   readonly providerName = 'fake';
+  public receivedLimits: number[] = [];
   private readonly candidates: Candidate[];
 
   constructor(candidates: Candidate[]) {
@@ -68,6 +69,7 @@ class FakeCandidateProvider implements CandidateProvider {
   }
 
   async fetchCandidates(request: CandidateRequest): Promise<Candidate[]> {
+    this.receivedLimits.push(request.limit);
     return this.candidates.slice(0, request.limit);
   }
 }
@@ -231,5 +233,24 @@ describe('BuildDiscoveryQueue — excludeCandidateIds prevents repeat batches fr
 
     expect(result.queue.current()).toBeNull();
     expect(result.enrichedCandidates).toEqual([]);
+  });
+});
+
+describe('BuildDiscoveryQueue — requests a much larger pool from the provider than the caller\'s batch size (M21)', () => {
+  it('asks the aggregator/provider for far more than the requested batch limit, regardless of caller-supplied limit', async () => {
+    const provider = new FakeCandidateProvider([candidate('c1', 'Track', 'Artist', [])]);
+    const useCase = new BuildDiscoveryQueue(
+      new FakeUserDnaRepository(null),
+      new FakeTrackDnaRepository(),
+      new CandidateAggregator([provider]),
+      buildPipeline(),
+      new RuleBasedRankingEngine(),
+    );
+
+    await useCase.execute('user-1', EMPTY_SNAPSHOT, 15, NOW);
+
+    expect(provider.receivedLimits).toHaveLength(1);
+    expect(provider.receivedLimits[0]).toBeGreaterThan(15);
+    expect(provider.receivedLimits[0]).toBeGreaterThanOrEqual(100);
   });
 });

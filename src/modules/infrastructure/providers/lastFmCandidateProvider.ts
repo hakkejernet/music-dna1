@@ -2,9 +2,24 @@ import { getTopTags, getSimilarArtists, getTopTracksForArtist } from '../../last
 import { getTopArtists } from '../../spotify';
 import type { Candidate, CandidateProvider, CandidateRequest } from '../../candidateProviders';
 
-const MAX_SEED_ARTISTS = 3;
-const MAX_SIMILAR_PER_SEED = 5;
-const MAX_TRACKS_PER_ARTIST = 5;
+/**
+ * M21: raised from 3/5/5. The old values bounded the entire candidate
+ * universe to at most 3 × 5 × 5 = 75 unique raw candidates, ever, for a
+ * given user — every one of them already the "most similar" artists to
+ * only 3 seeds, so once M19's exclusion-based refill exhausted that
+ * fixed set (in practice within a handful of batches), there was
+ * nothing broader left to draw from; whatever was still available near
+ * the end was, by construction, the least-similar tail of an already
+ * narrow set, which is what read as declining quality rather than a
+ * separate ranking defect (Ranking Engine is unchanged — this is a
+ * candidate-supply problem, not a scoring one). More seeds (Rule 3) and
+ * a wider net per seed now bound the universe at up to 10 × 8 × 8 = 640
+ * raw candidates before dedup — enough variety that a session should
+ * exhaust it far less often.
+ */
+const MAX_SEED_ARTISTS = 10;
+const MAX_SIMILAR_PER_SEED = 8;
+const MAX_TRACKS_PER_ARTIST = 8;
 
 interface CandidateArtist {
   name: string;

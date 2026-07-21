@@ -124,3 +124,38 @@ describe('LastFmCandidateProvider — never fabricates candidates on failure (Sp
     expect((candidates[0].contributions[0].rawMetadata as { tags: string[] }).tags).toEqual([]);
   });
 });
+
+describe('LastFmCandidateProvider — expanded candidate pool (M21)', () => {
+  it('asks Spotify for more than 3 seed artists', async () => {
+    getTopArtists.mockResolvedValue([spotifyArtist('Radiohead')]);
+    getSimilarArtists.mockResolvedValue([]);
+
+    const { LastFmCandidateProvider } = await import('./lastFmCandidateProvider');
+    await new LastFmCandidateProvider().fetchCandidates({ limit: 10 });
+
+    expect(getTopArtists).toHaveBeenCalledWith(expect.any(Number));
+    const requestedSeedCount = getTopArtists.mock.calls[0]?.[0];
+    expect(requestedSeedCount).toBeGreaterThan(3);
+  });
+
+  it('draws candidates from every seed artist, not just the first few, once there are more than 3', async () => {
+    const seedArtists = Array.from({ length: 10 }, (_, i) => spotifyArtist(`Seed${i}`));
+    getTopArtists.mockResolvedValue(seedArtists);
+    getSimilarArtists.mockImplementation(async (seedName: string) => [similarArtist(`SimilarTo-${seedName}`, 0.5)]);
+    getTopTracksForArtist.mockImplementation(async (artistName: string) => [
+      lastFmTrack(`track-${artistName}`, `Track by ${artistName}`, artistName, 100),
+    ]);
+    getTopTags.mockResolvedValue([]);
+
+    const { LastFmCandidateProvider } = await import('./lastFmCandidateProvider');
+    const candidates = await new LastFmCandidateProvider().fetchCandidates({ limit: 100 });
+
+    // One unique similar artist (and therefore one candidate track) per
+    // seed — with 10 seeds now requested (up from 3), all 10 must show
+    // up as distinct candidates, proving the wider seed set actually
+    // reaches the returned pool rather than being discarded somewhere.
+    expect(candidates).toHaveLength(10);
+    const artistNames = new Set(candidates.map((candidate) => candidate.artists[0]));
+    expect(artistNames.size).toBe(10);
+  });
+});
