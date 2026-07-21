@@ -34,22 +34,33 @@ export const DiscoveryPage = () => {
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const user = await getCurrentUser();
-      if (cancelled) return;
-      setUserId(user.id);
+      try {
+        const user = await getCurrentUser();
+        if (cancelled) return;
+        setUserId(user.id);
 
-      const snapshot = await buildLibrarySnapshot();
-      if (cancelled) return;
+        const snapshot = await buildLibrarySnapshot();
+        if (cancelled) return;
 
-      const result = await appContext.useCases.buildDiscoveryQueue.execute(user.id, snapshot, DISCOVERY_LIMIT, new Date());
-      if (cancelled) return;
+        const result = await appContext.useCases.buildDiscoveryQueue.execute(user.id, snapshot, DISCOVERY_LIMIT, new Date());
+        if (cancelled) return;
 
-      if (!result.success) {
-        setLoadError(result.error.reason);
-        return;
+        if (!result.success) {
+          setLoadError(result.error.reason);
+          return;
+        }
+        setQueue(result.value.queue);
+        setEnrichedById(new Map(result.value.enrichedCandidates.map((enriched) => [enriched.candidate.candidateId, enriched])));
+      } catch (error) {
+        // Bugfix M16: without this, any thrown error in the load chain
+        // (e.g. getCurrentUser() on an expired/missing Spotify session)
+        // left the promise silently rejected and the page stuck forever
+        // on "Finder ny musik til dig..." — loading must always end in
+        // either content or an error state, never neither.
+        if (cancelled) return;
+        console.warn('[discovery] Kunne ikke indlæse anbefalinger:', error);
+        setLoadError(error instanceof Error ? error.message : 'Der opstod en uventet fejl under indlæsning af anbefalinger.');
       }
-      setQueue(result.value.queue);
-      setEnrichedById(new Map(result.value.enrichedCandidates.map((enriched) => [enriched.candidate.candidateId, enriched])));
     })();
     return () => {
       cancelled = true;
