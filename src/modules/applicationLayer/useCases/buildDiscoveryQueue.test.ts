@@ -175,3 +175,61 @@ describe('BuildDiscoveryQueue — the full Spotify Library → Candidate Provide
     expect(result).toEqual(failure(theFailure));
   });
 });
+
+describe('BuildDiscoveryQueue — excludeCandidateIds prevents repeat batches from showing the same songs (M19)', () => {
+  const manyCandidates = Array.from({ length: 20 }, (_, index) => candidate(`c${index}`, `Track ${index}`, 'Artist', []));
+
+  it('omits every excluded candidate from the returned batch', async () => {
+    const alreadyShown = new Set(manyCandidates.slice(0, 15).map((c) => c.candidateId));
+    const useCase = new BuildDiscoveryQueue(
+      new FakeUserDnaRepository(null),
+      new FakeTrackDnaRepository(),
+      new CandidateAggregator([new FakeCandidateProvider(manyCandidates)]),
+      buildPipeline(),
+      new RuleBasedRankingEngine(),
+    );
+
+    const result = expectSuccess(await useCase.execute('user-1', EMPTY_SNAPSHOT, 15, NOW, alreadyShown));
+
+    const returnedIds = result.enrichedCandidates.map((enriched) => enriched.candidate.candidateId);
+    expect(returnedIds.some((id) => alreadyShown.has(id))).toBe(false);
+    // Only 5 of the 20 fixture candidates were never shown — that's all that's left to return.
+    expect(returnedIds).toHaveLength(5);
+  });
+
+  it('a second batch excluding the first batch\'s ids never reproduces a candidate the first batch already returned', async () => {
+    const provider = new FakeCandidateProvider(manyCandidates);
+    const useCase = new BuildDiscoveryQueue(
+      new FakeUserDnaRepository(null),
+      new FakeTrackDnaRepository(),
+      new CandidateAggregator([provider]),
+      buildPipeline(),
+      new RuleBasedRankingEngine(),
+    );
+
+    const firstBatch = expectSuccess(await useCase.execute('user-1', EMPTY_SNAPSHOT, 15, NOW));
+    const shown = new Set(firstBatch.enrichedCandidates.map((enriched) => enriched.candidate.candidateId));
+
+    const secondBatch = expectSuccess(await useCase.execute('user-1', EMPTY_SNAPSHOT, 15, NOW, shown));
+    const secondIds = secondBatch.enrichedCandidates.map((enriched) => enriched.candidate.candidateId);
+
+    expect(secondIds.some((id) => shown.has(id))).toBe(false);
+    expect(secondIds).toHaveLength(5);
+  });
+
+  it('returns a genuinely empty batch — not a crash — once every available candidate has already been shown', async () => {
+    const allShown = new Set(manyCandidates.map((c) => c.candidateId));
+    const useCase = new BuildDiscoveryQueue(
+      new FakeUserDnaRepository(null),
+      new FakeTrackDnaRepository(),
+      new CandidateAggregator([new FakeCandidateProvider(manyCandidates)]),
+      buildPipeline(),
+      new RuleBasedRankingEngine(),
+    );
+
+    const result = expectSuccess(await useCase.execute('user-1', EMPTY_SNAPSHOT, 15, NOW, allShown));
+
+    expect(result.queue.current()).toBeNull();
+    expect(result.enrichedCandidates).toEqual([]);
+  });
+});

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAppContext } from '../../AppContextProvider';
 import { processReactionEvent, type LearningEvent } from '../../modules/feedbackPipeline';
 import { buildLibrarySnapshot } from '../../modules/infrastructure';
@@ -31,6 +31,13 @@ export const DiscoveryPage = () => {
   const [lastAction, setLastAction] = useState<string | null>(null);
   const [spotifyUrl, setSpotifyUrl] = useState<string | null>(null);
 
+  // M19: every candidate ever included in a batch this session — save
+  // and reject are both reactions to a candidate that was necessarily
+  // shown first, so this one set covers "already shown", "rejected",
+  // and "saved" at once. A ref, not state: read at fetch time, never
+  // needs to trigger a render itself.
+  const shownCandidateIds = useRef<Set<string>>(new Set());
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -48,6 +55,9 @@ export const DiscoveryPage = () => {
         if (!result.success) {
           setLoadError(result.error.reason);
           return;
+        }
+        for (const enriched of result.value.enrichedCandidates) {
+          shownCandidateIds.current.add(enriched.candidate.candidateId);
         }
         setQueue(result.value.queue);
         setEnrichedById(new Map(result.value.enrichedCandidates.map((enriched) => [enriched.candidate.candidateId, enriched])));
@@ -114,15 +124,61 @@ export const DiscoveryPage = () => {
     });
   };
 
+  /**
+   * M19: fetches a fresh batch that excludes every candidate already
+   * shown this session (buildDiscoveryQueue.execute()'s excludeCandidateIds),
+   * so a refill never reproduces the same songs. Used only when the
+   * current queue has just run out — mirrors the initial load effect's
+   * own error handling so an auth failure here still returns the user
+   * to LoginScreen instead of a dead-end error screen.
+   */
+  const fetchNextBatch = async () => {
+    try {
+      const user = await getCurrentUser();
+      setUserId(user.id);
+
+      const snapshot = await buildLibrarySnapshot();
+      const result = await appContext.useCases.buildDiscoveryQueue.execute(user.id, snapshot, DISCOVERY_LIMIT, new Date(), shownCandidateIds.current);
+
+      if (!result.success) {
+        setLoadError(result.error.reason);
+        return;
+      }
+      for (const enriched of result.value.enrichedCandidates) {
+        shownCandidateIds.current.add(enriched.candidate.candidateId);
+      }
+      setQueue(result.value.queue);
+      setEnrichedById((previous) => new Map([...previous, ...result.value.enrichedCandidates.map((e) => [e.candidate.candidateId, e] as const)]));
+    } catch (error) {
+      if (error instanceof SpotifyAuthError) {
+        logout();
+        return;
+      }
+      console.warn('[discovery] Kunne ikke indlæse en ny batch:', error);
+      setLoadError(error instanceof Error ? error.message : 'Der opstod en uventet fejl under indlæsning af anbefalinger.');
+    }
+  };
+
   const handleReaction = (reactionType: ReactionType) => {
     if (!queue) return;
     const { event, queue: nextQueue } = queue.react(reactionType);
-    setQueue(nextQueue);
     setLastAction(ACTION_LABELS[reactionType]);
 
-    if (!event) return;
-    const feedback = processReactionEvent(event, new Date());
-    if (feedback.accepted) recordReaction(feedback.learningEvent);
+    if (event) {
+      const feedback = processReactionEvent(event, new Date());
+      if (feedback.accepted) recordReaction(feedback.learningEvent);
+    }
+
+    if (nextQueue.current() === null) {
+      // The batch just ran out — refill instead of showing the "no more
+      // recommendations" dead end. Keep the existing loading state
+      // (queue === null) visible during the refetch, exactly like the
+      // initial load, rather than flashing the empty-queue message first.
+      setQueue(null);
+      void fetchNextBatch();
+    } else {
+      setQueue(nextQueue);
+    }
   };
 
   const why = useMemo(() => current?.explanations.slice(0, 2) ?? [], [current]);

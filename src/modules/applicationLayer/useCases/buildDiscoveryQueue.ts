@@ -14,6 +14,17 @@ export interface DiscoveryQueueResult {
 }
 
 /**
+ * M19: requested from the aggregator regardless of the caller's batch
+ * size. LastFmCandidateProvider already computes its full candidate
+ * pool (similar artists × their top tracks) internally before
+ * truncating to whatever limit it's given — asking for more here costs
+ * no extra network calls, it just lets more of that already-computed
+ * pool through the provider's own final slice, which is what makes a
+ * second, non-repeating batch possible from the same seed artists.
+ */
+const CANDIDATE_POOL_SIZE = 100;
+
+/**
  * Product Sprint 1's one new workflow: "Spotify Library → Candidate
  * Provider → Ranking → Queue" (Rule 1), coordinated the same way every
  * other Application Service already does (M10 Rule 1/2) — this class
@@ -59,12 +70,27 @@ export class BuildDiscoveryQueue {
     this.rankingEngine = rankingEngine;
   }
 
-  async execute(userId: string, snapshot: LibrarySnapshot, limit: number, now: Date): Promise<Result<DiscoveryQueueResult, RepositoryFailure>> {
+  /**
+   * `excludeCandidateIds` (M19) is every candidate already shown to this
+   * user this session — including ones they saved or rejected, since
+   * both are reactions to a candidate that was necessarily shown first.
+   * Filtered out before enrichment, so a repeat call (e.g. once the
+   * previous batch is exhausted) draws only fresh candidates from the
+   * same underlying pool instead of reproducing the same songs.
+   */
+  async execute(
+    userId: string,
+    snapshot: LibrarySnapshot,
+    limit: number,
+    now: Date,
+    excludeCandidateIds: ReadonlySet<string> = new Set(),
+  ): Promise<Result<DiscoveryQueueResult, RepositoryFailure>> {
     const userDnaResult = await this.ensureUserDna(userId, snapshot, now);
     if (!userDnaResult.success) return userDnaResult;
 
-    const { candidates } = await this.candidateAggregator.fetchAll({ limit }, now);
-    const enrichedCandidates = await Promise.all(candidates.map((candidate) => this.enrichmentPipeline.enrich(candidate, now)));
+    const { candidates } = await this.candidateAggregator.fetchAll({ limit: CANDIDATE_POOL_SIZE }, now);
+    const freshCandidates = candidates.filter((candidate) => !excludeCandidateIds.has(candidate.candidateId)).slice(0, limit);
+    const enrichedCandidates = await Promise.all(freshCandidates.map((candidate) => this.enrichmentPipeline.enrich(candidate, now)));
 
     const persisted: EnrichedCandidate[] = [];
     for (const enriched of enrichedCandidates) {
