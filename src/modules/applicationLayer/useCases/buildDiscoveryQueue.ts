@@ -96,7 +96,7 @@ export class BuildDiscoveryQueue {
     if (!userDnaResult.success) return userDnaResult;
 
     const { candidates } = await this.candidateAggregator.fetchAll({ limit: CANDIDATE_POOL_SIZE }, now);
-    const freshCandidates = candidates.filter((candidate) => !excludeCandidateIds.has(candidate.candidateId)).slice(0, limit);
+    const freshCandidates = candidates.filter((candidate) => !excludeCandidateIds.has(candidate.candidateId));
     const enrichedCandidates = await Promise.all(freshCandidates.map((candidate) => this.enrichmentPipeline.enrich(candidate, now)));
 
     const persisted: EnrichedCandidate[] = [];
@@ -105,10 +105,24 @@ export class BuildDiscoveryQueue {
       if (saveResult.success) persisted.push(enriched);
     }
 
-    const rankedCandidates = this.rankingEngine.rank(userDnaResult.value, persisted, now);
-    const queue = RecommendationQueue.create(rankedCandidates);
+    // M23: rank the entire filtered/enriched pool first, and only take the
+    // top `limit` afterwards. Previously the pool was truncated to `limit`
+    // BEFORE ranking ever ran, so RankingEngine only ever reordered an
+    // arbitrary early slice of the fetched pool instead of choosing the
+    // best-matching candidates out of everything actually available.
+    const rankedPool = this.rankingEngine.rank(userDnaResult.value, persisted, now);
+    const topRanked = rankedPool.slice(0, limit);
 
-    return success({ queue, enrichedCandidates: persisted });
+    const persistedByCandidateId = new Map(persisted.map((enriched) => [enriched.candidate.candidateId, enriched]));
+    const topEnriched: EnrichedCandidate[] = [];
+    for (const ranked of topRanked) {
+      const enriched = persistedByCandidateId.get(ranked.candidateRef);
+      if (enriched) topEnriched.push(enriched);
+    }
+
+    const queue = RecommendationQueue.create(topRanked);
+
+    return success({ queue, enrichedCandidates: topEnriched });
   }
 
   /** Never fails on "no UserDNA yet" — that's the expected first-run state, resolved by building and saving a cold-start one instead of returning UserDnaNotFound. */

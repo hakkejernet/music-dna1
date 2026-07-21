@@ -8,6 +8,7 @@ import type { TrackDnaRepository, UserDnaRepository } from '../../persistence';
 import { RuleBasedRankingEngine } from '../../rankingEngine';
 import { failure, success, type Result } from '../../result';
 import type { TrackDNA } from '../../trackDna';
+import { validateSignalVector } from '../../trackDna';
 import type { LibrarySnapshot, UserDNA } from '../../userDna';
 import { BuildDiscoveryQueue } from './buildDiscoveryQueue';
 
@@ -252,5 +253,57 @@ describe('BuildDiscoveryQueue — requests a much larger pool from the provider 
     expect(provider.receivedLimits).toHaveLength(1);
     expect(provider.receivedLimits[0]).toBeGreaterThan(15);
     expect(provider.receivedLimits[0]).toBeGreaterThanOrEqual(100);
+  });
+});
+
+describe('BuildDiscoveryQueue — ranks the entire filtered pool before selecting the top `limit` (M23)', () => {
+  it('selects the best-matching candidates regardless of where they landed in the raw fetch order', async () => {
+    const existingUserDna: UserDNA = {
+      userId: 'user-1',
+      signals: validateSignalVector({ rock: { value: 1, confidence: 1 } }),
+      coldStart: false,
+      sourceLibrarySnapshotRef: null,
+      version: 1,
+      updatedAt: '2025-06-01T00:00:00.000Z',
+    };
+
+    // The 5 rock-tagged candidates that should score highest are placed
+    // LAST in the raw provider order, after 15 untagged filler candidates.
+    // Under the old slice-before-rank logic, a batch limit of 5 would have
+    // taken only the first 5 fillers and never reached ranking at all —
+    // this proves ranking now sees (and correctly prefers) the whole pool.
+    const fillers = Array.from({ length: 15 }, (_, i) => candidate(`filler${i}`, `Filler ${i}`, 'Artist', []));
+    const rockMatches = Array.from({ length: 5 }, (_, i) => candidate(`rock${i}`, `Rock Track ${i}`, 'Artist', ['rock']));
+    const provider = new FakeCandidateProvider([...fillers, ...rockMatches]);
+
+    const useCase = new BuildDiscoveryQueue(
+      new FakeUserDnaRepository(existingUserDna),
+      new FakeTrackDnaRepository(),
+      new CandidateAggregator([provider]),
+      buildPipeline(),
+      new RuleBasedRankingEngine(),
+    );
+
+    const result = expectSuccess(await useCase.execute('user-1', EMPTY_SNAPSHOT, 5, NOW));
+
+    const returnedIds = result.enrichedCandidates.map((enriched) => enriched.candidate.candidateId);
+    expect(returnedIds).toHaveLength(5);
+    expect(returnedIds.every((id) => id.startsWith('rock'))).toBe(true);
+  });
+
+  it('still requests the full CANDIDATE_POOL_SIZE from the aggregator, not just `limit`, before ranking', async () => {
+    const provider = new FakeCandidateProvider([candidate('c1', 'Track', 'Artist', [])]);
+    const useCase = new BuildDiscoveryQueue(
+      new FakeUserDnaRepository(null),
+      new FakeTrackDnaRepository(),
+      new CandidateAggregator([provider]),
+      buildPipeline(),
+      new RuleBasedRankingEngine(),
+    );
+
+    const result = expectSuccess(await useCase.execute('user-1', EMPTY_SNAPSHOT, 5, NOW));
+
+    expect(provider.receivedLimits[0]).toBeGreaterThanOrEqual(100);
+    expect(result.enrichedCandidates).toHaveLength(1);
   });
 });
