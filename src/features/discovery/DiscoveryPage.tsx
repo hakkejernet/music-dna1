@@ -10,7 +10,7 @@ import { getInstantSpotifyUrl, resolveSpotifyTrackUrl } from '../../modules/spot
 import { useAuth } from '../auth/AuthContext';
 import { ActionBar } from './components/ActionBar';
 import { RecommendationCard } from './components/RecommendationCard';
-import { loadDiscoverySession, saveDiscoverySession } from './discoverySessionStorage';
+import { clearDiscoverySession, loadDiscoverySession, saveDiscoverySession } from './discoverySessionStorage';
 
 /** How many real candidates one Spotify-Library → Candidate Provider → Ranking pass fetches (Sprint 1 Rule 1) — a fixed, small batch, not a paginated feed. */
 const DISCOVERY_LIMIT = 15;
@@ -63,11 +63,21 @@ export const DiscoveryPage = () => {
         // through to a fresh fetch below, same as no session at all.
         const restored = loadDiscoverySession(new Date());
         if (restored && restored.userId === user.id) {
-          if (cancelled) return;
-          shownCandidateIds.current = new Set(restored.shownCandidateIds);
-          setEnrichedById(new Map(restored.enriched));
-          setQueue(RecommendationQueue.restore(restored.items, restored.cursor));
-          return;
+          const restoredQueue = RecommendationQueue.restore(restored.items, restored.cursor);
+
+          // M22: a session saved while the queue was already exhausted
+          // (e.g. a refill that genuinely found nothing left, M19 Rule 7)
+          // must not be resurrected as a dead end with no way forward —
+          // discard it and fall through to a fresh fetch below, exactly
+          // as if no session had been found at all.
+          if (restoredQueue.current() !== null) {
+            if (cancelled) return;
+            shownCandidateIds.current = new Set(restored.shownCandidateIds);
+            setEnrichedById(new Map(restored.enriched));
+            setQueue(restoredQueue);
+            return;
+          }
+          clearDiscoverySession();
         }
 
         const snapshot = await buildLibrarySnapshot();
