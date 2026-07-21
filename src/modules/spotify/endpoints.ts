@@ -69,7 +69,10 @@ interface RawPlaylistItem {
 interface RawArtist {
   id: string;
   name: string;
-  genres: string[];
+  // Optional: Spotify's documented schema always includes this, but a live
+  // response has been observed without it — treat it as absent rather than
+  // crash the whole seed-building pipeline over one artist's genre tags.
+  genres?: string[];
   popularity: number;
   // Optional: Spotify's documented schema always includes this, but a live
   // response has been observed without it — treat it as absent rather than
@@ -84,7 +87,7 @@ const mapImages = (images: RawImage[]): SpotifyImage[] =>
 const mapArtist = (artist: RawArtist): SpotifyArtist => ({
   id: artist.id,
   name: artist.name,
-  genres: artist.genres,
+  genres: artist.genres ?? [],
   popularity: artist.popularity,
   followers: artist.followers?.total ?? 0,
   images: mapImages(artist.images),
