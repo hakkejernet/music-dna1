@@ -5,7 +5,7 @@ import { buildLibrarySnapshot } from '../../modules/infrastructure';
 import { RecommendationQueue } from '../../modules/queue';
 import type { ReactionType } from '../../modules/queue';
 import type { EnrichedCandidate } from '../../modules/enrichment';
-import { getCurrentUser } from '../../modules/spotify';
+import { getCurrentUser, SpotifyAuthError } from '../../modules/spotify';
 import { getInstantSpotifyUrl, resolveSpotifyTrackUrl } from '../../modules/spotifyLink';
 import { useAuth } from '../auth/AuthContext';
 import { ActionBar } from './components/ActionBar';
@@ -58,6 +58,17 @@ export const DiscoveryPage = () => {
         // on "Finder ny musik til dig..." — loading must always end in
         // either content or an error state, never neither.
         if (cancelled) return;
+
+        // M17: an expired/invalid Spotify session is not a generic
+        // failure — it's the one error condition RequireAuth already
+        // knows how to recover from (it shows LoginScreen once
+        // isAuthenticated flips to false). Every other error still gets
+        // the M16 "Noget gik galt" fallback unchanged.
+        if (error instanceof SpotifyAuthError) {
+          logout();
+          return;
+        }
+
         console.warn('[discovery] Kunne ikke indlæse anbefalinger:', error);
         setLoadError(error instanceof Error ? error.message : 'Der opstod en uventet fejl under indlæsning af anbefalinger.');
       }
@@ -65,7 +76,7 @@ export const DiscoveryPage = () => {
     return () => {
       cancelled = true;
     };
-  }, [appContext]);
+  }, [appContext, logout]);
 
   const current = queue?.current() ?? null;
   const currentCandidate = current ? enrichedById.get(current.candidateRef)?.candidate ?? null : null;
