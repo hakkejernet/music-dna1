@@ -151,6 +151,20 @@ class FakeObservationSink implements ObservationSink {
     this.push({ type: 'LearningApplied', ...input, observedAt: now.toISOString() });
   }
 
+  recordCandidatePipelineMeasured(
+    input: {
+      userId: string;
+      rawCandidateCount: number;
+      deduplicatedCandidateCount: number;
+      enrichedCandidateCount: number;
+      finalRankedPoolSize: number;
+      providerDiagnostics: readonly { providerName: string; diagnostics: Readonly<Record<string, number>> }[];
+    },
+    now: Date,
+  ): void {
+    this.push({ type: 'CandidatePipelineMeasured', ...input, observedAt: now.toISOString() });
+  }
+
   getAll(): readonly Observation[] {
     return this.recorded;
   }

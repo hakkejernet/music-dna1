@@ -4,6 +4,7 @@ import type { Candidate, CandidateProvider, CandidateRequest } from '../../candi
 import type { RepositoryFailure } from '../../domainErrors';
 import { repositoryFailure } from '../../domainErrors';
 import { explicitMetadataEnricher, EnrichmentPipeline, tagBasedEnricher, trackSimilarityEnricher } from '../../enrichment';
+import type { Observation, ObservationSink } from '../../observability';
 import type { RecommendationMemoryRepository, TrackDnaRepository, UserDnaRepository } from '../../persistence';
 import type { RecommendationMemoryEntry } from '../../recommendationMemory';
 import { RuleBasedRankingEngine } from '../../rankingEngine';
@@ -81,6 +82,31 @@ class FakeRecommendationMemoryRepository implements RecommendationMemoryReposito
   }
 }
 
+/** M31: a minimal ObservationSink fake — only `recordCandidatePipelineMeasured` calls are ever asserted on in this suite; every other record* method is a harmless no-op, consistent with Observability's own "never influences anything" contract (M13 Rule 1). */
+class FakeObservationSink implements ObservationSink {
+  public recordedPipelineMeasurements: Parameters<ObservationSink['recordCandidatePipelineMeasured']>[0][] = [];
+  private readonly throwOnRecord: boolean;
+
+  constructor(options: { throwOnRecord?: boolean } = {}) {
+    this.throwOnRecord = options.throwOnRecord ?? false;
+  }
+
+  recordRecommendationShown(): void {}
+  recordRecommendationAccepted(): void {}
+  recordRecommendationRejected(): void {}
+  recordRecommendationKnown(): void {}
+  recordLearningApplied(): void {}
+
+  recordCandidatePipelineMeasured(input: Parameters<ObservationSink['recordCandidatePipelineMeasured']>[0]): void {
+    if (this.throwOnRecord) throw new Error('simulated ObservationSink failure');
+    this.recordedPipelineMeasurements.push(input);
+  }
+
+  getAll(): readonly Observation[] {
+    return [];
+  }
+}
+
 /** A CandidateProvider test double — the only fake in this suite; CandidateAggregator, EnrichmentPipeline, and RuleBasedRankingEngine below are all the real, unmodified implementations. */
 class FakeCandidateProvider implements CandidateProvider {
   readonly providerName = 'fake';
@@ -123,6 +149,7 @@ describe('BuildDiscoveryQueue — the full Spotify Library → Candidate Provide
       buildPipeline(),
       new RuleBasedRankingEngine(),
       new FakeRecommendationMemoryRepository(),
+      new FakeObservationSink(),
     );
 
     const snapshot: LibrarySnapshot = { topArtists: [{ genres: ['dream pop'], popularity: 40 }], savedTracks: null };
@@ -164,6 +191,7 @@ describe('BuildDiscoveryQueue — the full Spotify Library → Candidate Provide
       buildPipeline(),
       new RuleBasedRankingEngine(),
       new FakeRecommendationMemoryRepository(),
+      new FakeObservationSink(),
     );
 
     await useCase.execute('user-1', EMPTY_SNAPSHOT, 10, NOW);
@@ -179,6 +207,7 @@ describe('BuildDiscoveryQueue — the full Spotify Library → Candidate Provide
       buildPipeline(),
       new RuleBasedRankingEngine(),
       new FakeRecommendationMemoryRepository(),
+      new FakeObservationSink(),
     );
 
     const result = expectSuccess(await useCase.execute('user-1', EMPTY_SNAPSHOT, 10, NOW));
@@ -197,6 +226,7 @@ describe('BuildDiscoveryQueue — the full Spotify Library → Candidate Provide
       buildPipeline(),
       new RuleBasedRankingEngine(),
       new FakeRecommendationMemoryRepository(),
+      new FakeObservationSink(),
     );
 
     const result = await useCase.execute('user-1', EMPTY_SNAPSHOT, 10, NOW);
@@ -221,6 +251,7 @@ describe('BuildDiscoveryQueue — excludeCandidateIds prevents repeat batches fr
       buildPipeline(),
       new RuleBasedRankingEngine(),
       new FakeRecommendationMemoryRepository(),
+      new FakeObservationSink(),
     );
 
     const result = expectSuccess(await useCase.execute('user-1', EMPTY_SNAPSHOT, 15, NOW, alreadyShown));
@@ -240,6 +271,7 @@ describe('BuildDiscoveryQueue — excludeCandidateIds prevents repeat batches fr
       buildPipeline(),
       new RuleBasedRankingEngine(),
       new FakeRecommendationMemoryRepository(),
+      new FakeObservationSink(),
     );
 
     const firstBatch = expectSuccess(await useCase.execute('user-1', EMPTY_SNAPSHOT, 15, NOW));
@@ -261,6 +293,7 @@ describe('BuildDiscoveryQueue — excludeCandidateIds prevents repeat batches fr
       buildPipeline(),
       new RuleBasedRankingEngine(),
       new FakeRecommendationMemoryRepository(),
+      new FakeObservationSink(),
     );
 
     const result = expectSuccess(await useCase.execute('user-1', EMPTY_SNAPSHOT, 15, NOW, allShown));
@@ -280,6 +313,7 @@ describe('BuildDiscoveryQueue — requests a much larger pool from the provider 
       buildPipeline(),
       new RuleBasedRankingEngine(),
       new FakeRecommendationMemoryRepository(),
+      new FakeObservationSink(),
     );
 
     await useCase.execute('user-1', EMPTY_SNAPSHOT, 15, NOW);
@@ -321,6 +355,7 @@ describe('BuildDiscoveryQueue — ranks the entire filtered pool before selectin
       buildPipeline(),
       new RuleBasedRankingEngine(),
       new FakeRecommendationMemoryRepository(),
+      new FakeObservationSink(),
     );
 
     const result = expectSuccess(await useCase.execute('user-1', EMPTY_SNAPSHOT, 5, NOW));
@@ -339,6 +374,7 @@ describe('BuildDiscoveryQueue — ranks the entire filtered pool before selectin
       buildPipeline(),
       new RuleBasedRankingEngine(),
       new FakeRecommendationMemoryRepository(),
+      new FakeObservationSink(),
     );
 
     const result = expectSuccess(await useCase.execute('user-1', EMPTY_SNAPSHOT, 5, NOW));
@@ -361,6 +397,7 @@ describe('BuildDiscoveryQueue — caps candidates per primary artist without re-
       buildPipeline(),
       new RuleBasedRankingEngine(),
       new FakeRecommendationMemoryRepository(),
+      new FakeObservationSink(),
     );
 
     const result = expectSuccess(await useCase.execute('user-1', EMPTY_SNAPSHOT, 3, NOW));
@@ -404,6 +441,7 @@ describe('BuildDiscoveryQueue — filters out currently-suppressed candidates vi
       buildPipeline(),
       new RuleBasedRankingEngine(),
       new FakeRecommendationMemoryRepository([rejectedRecently]),
+      new FakeObservationSink(),
     );
 
     const result = expectSuccess(await useCase.execute('user-1', EMPTY_SNAPSHOT, 10, NOW));
@@ -427,6 +465,7 @@ describe('BuildDiscoveryQueue — filters out currently-suppressed candidates vi
       buildPipeline(),
       new RuleBasedRankingEngine(),
       new FakeRecommendationMemoryRepository([rejectedLongAgo]),
+      new FakeObservationSink(),
     );
 
     const result = expectSuccess(await useCase.execute('user-1', EMPTY_SNAPSHOT, 10, NOW));
@@ -450,6 +489,7 @@ describe('BuildDiscoveryQueue — filters out currently-suppressed candidates vi
       buildPipeline(),
       new RuleBasedRankingEngine(),
       new FakeRecommendationMemoryRepository([saved]),
+      new FakeObservationSink(),
     );
 
     const result = expectSuccess(await useCase.execute('user-1', EMPTY_SNAPSHOT, 10, farFuture));
@@ -468,6 +508,7 @@ describe('BuildDiscoveryQueue — filters out currently-suppressed candidates vi
       buildPipeline(),
       new RuleBasedRankingEngine(),
       new FakeRecommendationMemoryRepository([], { failNextGet: theFailure }),
+      new FakeObservationSink(),
     );
 
     const result = expectSuccess(await useCase.execute('user-1', EMPTY_SNAPSHOT, 10, NOW));
@@ -485,6 +526,7 @@ describe('BuildDiscoveryQueue — filters out currently-suppressed candidates vi
       buildPipeline(),
       new RuleBasedRankingEngine(),
       new FakeRecommendationMemoryRepository(),
+      new FakeObservationSink(),
     );
 
     const result = expectSuccess(await useCase.execute('user-1', EMPTY_SNAPSHOT, 10, NOW));
@@ -516,6 +558,7 @@ describe('BuildDiscoveryQueue — track-level similarity data moves rank order e
       buildPipeline(),
       new RuleBasedRankingEngine(),
       new FakeRecommendationMemoryRepository(),
+      new FakeObservationSink(),
     );
 
     const result = expectSuccess(await useCase.execute('user-1', EMPTY_SNAPSHOT, 2, NOW));
@@ -534,11 +577,113 @@ describe('BuildDiscoveryQueue — track-level similarity data moves rank order e
       buildPipeline(),
       new RuleBasedRankingEngine(),
       new FakeRecommendationMemoryRepository(),
+      new FakeObservationSink(),
     );
 
     const result = expectSuccess(await useCase.execute('user-1', EMPTY_SNAPSHOT, 2, NOW));
     const returnedIds = result.enrichedCandidates.map((enriched) => enriched.candidate.candidateId);
 
     expect(returnedIds).toEqual(['a', 'b']);
+  });
+});
+
+describe('BuildDiscoveryQueue — records candidate pipeline diagnostics, purely observational (M31)', () => {
+  /** A CandidateProvider double that also implements the optional M31 diagnostics hook, to prove provider-level counts flow all the way through to the recorded observation. */
+  class InstrumentedFakeCandidateProvider implements CandidateProvider {
+    readonly providerName = 'instrumented-fake';
+    private readonly candidates: Candidate[];
+
+    constructor(candidates: Candidate[]) {
+      this.candidates = candidates;
+    }
+
+    async fetchCandidates(request: CandidateRequest): Promise<Candidate[]> {
+      return this.candidates.slice(0, request.limit);
+    }
+
+    getLastFetchDiagnostics(): Readonly<Record<string, number>> | null {
+      return { seedArtistCount: 4, lastFmCallCount: 17 };
+    }
+  }
+
+  it('records exactly one CandidatePipelineMeasured observation per execute() call, with accurate counts', async () => {
+    const candidates = [candidate('c1', 'Track 1', 'ArtistA', []), candidate('c2', 'Track 2', 'ArtistB', []), candidate('c3', 'Track 3', 'ArtistC', [])];
+    const observationSink = new FakeObservationSink();
+    const useCase = new BuildDiscoveryQueue(
+      new FakeUserDnaRepository(null),
+      new FakeTrackDnaRepository(),
+      new CandidateAggregator([new FakeCandidateProvider(candidates)]),
+      buildPipeline(),
+      new RuleBasedRankingEngine(),
+      new FakeRecommendationMemoryRepository(),
+      observationSink,
+    );
+
+    await useCase.execute('user-1', EMPTY_SNAPSHOT, 10, NOW);
+
+    expect(observationSink.recordedPipelineMeasurements).toHaveLength(1);
+    expect(observationSink.recordedPipelineMeasurements[0]).toEqual({
+      userId: 'user-1',
+      rawCandidateCount: 3,
+      deduplicatedCandidateCount: 3,
+      enrichedCandidateCount: 3,
+      finalRankedPoolSize: 3,
+      providerDiagnostics: [],
+    });
+  });
+
+  it('surfaces a provider’s optional getLastFetchDiagnostics() all the way through to the recorded observation', async () => {
+    const observationSink = new FakeObservationSink();
+    const useCase = new BuildDiscoveryQueue(
+      new FakeUserDnaRepository(null),
+      new FakeTrackDnaRepository(),
+      new CandidateAggregator([new InstrumentedFakeCandidateProvider([candidate('c1', 'Track 1', 'ArtistA', [])])]),
+      buildPipeline(),
+      new RuleBasedRankingEngine(),
+      new FakeRecommendationMemoryRepository(),
+      observationSink,
+    );
+
+    await useCase.execute('user-1', EMPTY_SNAPSHOT, 10, NOW);
+
+    expect(observationSink.recordedPipelineMeasurements[0]).toMatchObject({
+      providerDiagnostics: [{ providerName: 'instrumented-fake', diagnostics: { seedArtistCount: 4, lastFmCallCount: 17 } }],
+    });
+  });
+
+  it('a throwing ObservationSink never affects the returned queue', async () => {
+    const useCase = new BuildDiscoveryQueue(
+      new FakeUserDnaRepository(null),
+      new FakeTrackDnaRepository(),
+      new CandidateAggregator([new FakeCandidateProvider([candidate('c1', 'Track', 'Artist', [])])]),
+      buildPipeline(),
+      new RuleBasedRankingEngine(),
+      new FakeRecommendationMemoryRepository(),
+      new FakeObservationSink({ throwOnRecord: true }),
+    );
+
+    const result = expectSuccess(await useCase.execute('user-1', EMPTY_SNAPSHOT, 10, NOW));
+
+    expect(result.enrichedCandidates).toHaveLength(1);
+  });
+
+  it('is deterministic — identical inputs produce an observation with identical counts across two independent runs', async () => {
+    const buildUseCase = (sink: FakeObservationSink) =>
+      new BuildDiscoveryQueue(
+        new FakeUserDnaRepository(null),
+        new FakeTrackDnaRepository(),
+        new CandidateAggregator([new FakeCandidateProvider([candidate('c1', 'Track', 'Artist', [])])]),
+        buildPipeline(),
+        new RuleBasedRankingEngine(),
+        new FakeRecommendationMemoryRepository(),
+        sink,
+      );
+
+    const sinkA = new FakeObservationSink();
+    const sinkB = new FakeObservationSink();
+    await buildUseCase(sinkA).execute('user-1', EMPTY_SNAPSHOT, 10, NOW);
+    await buildUseCase(sinkB).execute('user-1', EMPTY_SNAPSHOT, 10, NOW);
+
+    expect(sinkA.recordedPipelineMeasurements).toEqual(sinkB.recordedPipelineMeasurements);
   });
 });

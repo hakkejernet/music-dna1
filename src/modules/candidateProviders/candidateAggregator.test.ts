@@ -109,6 +109,9 @@ describe('CandidateAggregator — error isolation (M3 Rule 5)', () => {
         { providerName: 'a', lastSuccessAt: null, lastFailureAt: FIXED_NOW.toISOString() },
         { providerName: 'b', lastSuccessAt: null, lastFailureAt: FIXED_NOW.toISOString() },
       ],
+      rawCandidateCount: 0,
+      deduplicatedCandidateCount: 0,
+      providerDiagnostics: [],
     });
   });
 });
@@ -161,6 +164,86 @@ describe('CandidateAggregator — metadata preservation on dedup (M3 Rule 6)', (
   });
 });
 
+describe('CandidateAggregator — pipeline instrumentation (M31)', () => {
+  /** A CandidateProvider double that also implements the optional M31 diagnostics hook. */
+  class InstrumentedProvider implements CandidateProvider {
+    readonly providerName: string;
+    private readonly candidates: Candidate[];
+    private readonly diagnostics: Readonly<Record<string, number>>;
+
+    constructor(providerName: string, candidates: Candidate[], diagnostics: Readonly<Record<string, number>>) {
+      this.providerName = providerName;
+      this.candidates = candidates;
+      this.diagnostics = diagnostics;
+    }
+
+    async fetchCandidates(_request: CandidateRequest): Promise<Candidate[]> {
+      return this.candidates;
+    }
+
+    getLastFetchDiagnostics(): Readonly<Record<string, number>> | null {
+      return this.diagnostics;
+    }
+  }
+
+  it('reports rawCandidateCount as the sum of every successful provider’s own candidate count, before cross-provider dedup', async () => {
+    const providerA = new FixedListProvider('a', [candidate('a1', 'Song A', ['Artist A'], 'a', {})]);
+    const providerB = new FixedListProvider('b', [
+      candidate('b1', 'Song B', ['Artist B'], 'b', {}),
+      candidate('b2', 'Song C', ['Artist C'], 'b', {}),
+    ]);
+
+    const result = await new CandidateAggregator([providerA, providerB]).fetchAll({ limit: 10 }, FIXED_NOW);
+
+    expect(result.rawCandidateCount).toBe(3);
+    expect(result.deduplicatedCandidateCount).toBe(3);
+  });
+
+  it('deduplicatedCandidateCount is lower than rawCandidateCount when two providers agree on the same song', async () => {
+    const providerA = new FixedListProvider('lastfm', [candidate('lf-1', 'Same Song', ['Same Artist'], 'lastfm', {})]);
+    const providerB = new FixedListProvider('listenbrainz', [candidate('lb-1', 'same song', ['same artist'], 'listenbrainz', {})]);
+
+    const result = await new CandidateAggregator([providerA, providerB]).fetchAll({ limit: 10 }, FIXED_NOW);
+
+    expect(result.rawCandidateCount).toBe(2);
+    expect(result.deduplicatedCandidateCount).toBe(1);
+  });
+
+  it('a failing provider contributes nothing to rawCandidateCount', async () => {
+    const healthy = new FixedListProvider('healthy', [candidate('h1', 'Healthy Song', ['Healthy Artist'], 'healthy', {})]);
+    const failing = new FailingProvider('flaky');
+
+    const result = await new CandidateAggregator([healthy, failing]).fetchAll({ limit: 10 }, FIXED_NOW);
+
+    expect(result.rawCandidateCount).toBe(1);
+  });
+
+  it('collects providerDiagnostics only from providers implementing the optional hook', async () => {
+    const instrumented = new InstrumentedProvider('lastfm', [], { seedArtistCount: 3, lastFmCallCount: 12 });
+    const plain = new FixedListProvider('plain', []);
+
+    const result = await new CandidateAggregator([instrumented, plain]).fetchAll({ limit: 10 }, FIXED_NOW);
+
+    expect(result.providerDiagnostics).toEqual([{ providerName: 'lastfm', diagnostics: { seedArtistCount: 3, lastFmCallCount: 12 } }]);
+  });
+
+  it('still collects a failing provider’s diagnostics — the hook reports on the attempt, not only on success', async () => {
+    class InstrumentedFailingProvider implements CandidateProvider {
+      readonly providerName = 'flaky';
+      async fetchCandidates(): Promise<Candidate[]> {
+        throw new Error('flaky is unreachable');
+      }
+      getLastFetchDiagnostics(): Readonly<Record<string, number>> | null {
+        return { lastFmCallCount: 4 };
+      }
+    }
+
+    const result = await new CandidateAggregator([new InstrumentedFailingProvider()]).fetchAll({ limit: 10 }, FIXED_NOW);
+
+    expect(result.providerDiagnostics).toEqual([{ providerName: 'flaky', diagnostics: { lastFmCallCount: 4 } }]);
+  });
+});
+
 describe('CandidateAggregator — determinism and no network dependency', () => {
   it('produces identical results for identical inputs, called twice', async () => {
     const provider = new FixedListProvider('a', [candidate('a1', 'Song', ['Artist'], 'a', { x: 1 })]);
@@ -177,6 +260,6 @@ describe('CandidateAggregator — determinism and no network dependency', () => 
     // runtime: FixedListProvider and FailingProvider never touch fetch/XHR.
     // This test exists to document that guarantee alongside the others.
     const result = await new CandidateAggregator([]).fetchAll({ limit: 10 }, FIXED_NOW);
-    expect(result).toEqual({ candidates: [], providerMetadata: [] });
+    expect(result).toEqual({ candidates: [], providerMetadata: [], rawCandidateCount: 0, deduplicatedCandidateCount: 0, providerDiagnostics: [] });
   });
 });

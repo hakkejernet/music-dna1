@@ -18,9 +18,21 @@ const normalizeForMatching = (value: string): string =>
 const dedupeKey = (candidate: Candidate): string =>
   `${normalizeForMatching(candidate.title)}::${normalizeForMatching(candidate.artists[0] ?? '')}`;
 
+/** M31: which provider reported the diagnostics, and the provider's own named counters (see `LastFmCandidateProvider.getLastFetchDiagnostics` for the concrete field meanings). Only present for providers that implement the optional `getLastFetchDiagnostics()` hook. */
+export interface ProviderDiagnosticsEntry {
+  providerName: string;
+  diagnostics: Readonly<Record<string, number>>;
+}
+
 export interface CandidateAggregatorResult {
   candidates: Candidate[];
   providerMetadata: ProviderMetadata[];
+  /** M31: total candidates returned across all providers' own `fetchCandidates()` calls, before this aggregator's cross-provider dedup below. */
+  rawCandidateCount: number;
+  /** M31: `candidates.length` — the count after this aggregator's own cross-provider dedup (`byKey.size`). */
+  deduplicatedCandidateCount: number;
+  /** M31: per-provider instrumentation, collected only from providers implementing the optional `getLastFetchDiagnostics()` hook. */
+  providerDiagnostics: ProviderDiagnosticsEntry[];
 }
 
 /**
@@ -48,10 +60,18 @@ export class CandidateAggregator {
     const settled = await Promise.allSettled(this.providers.map((provider) => provider.fetchCandidates(request)));
 
     const providerMetadata: ProviderMetadata[] = [];
+    const providerDiagnostics: ProviderDiagnosticsEntry[] = [];
     const byKey = new Map<string, Candidate>();
+    let rawCandidateCount = 0;
 
     settled.forEach((result, index) => {
       const provider = this.providers[index];
+
+      // M31: recorded regardless of success/failure — the diagnostics hook
+      // reports "what happened on this provider's most recent attempt,"
+      // which is meaningful even when that attempt ultimately failed.
+      const diagnostics = provider.getLastFetchDiagnostics?.() ?? null;
+      if (diagnostics !== null) providerDiagnostics.push({ providerName: provider.providerName, diagnostics });
 
       if (result.status === 'rejected') {
         providerMetadata.push({ providerName: provider.providerName, lastSuccessAt: null, lastFailureAt: now.toISOString() });
@@ -59,6 +79,7 @@ export class CandidateAggregator {
       }
 
       providerMetadata.push({ providerName: provider.providerName, lastSuccessAt: now.toISOString(), lastFailureAt: null });
+      rawCandidateCount += result.value.length;
 
       for (const candidate of result.value) {
         const key = dedupeKey(candidate);
@@ -75,6 +96,6 @@ export class CandidateAggregator {
       }
     });
 
-    return { candidates: [...byKey.values()], providerMetadata };
+    return { candidates: [...byKey.values()], providerMetadata, rawCandidateCount, deduplicatedCandidateCount: byKey.size, providerDiagnostics };
   }
 }

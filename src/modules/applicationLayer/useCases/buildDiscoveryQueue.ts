@@ -1,7 +1,8 @@
-import { CandidateAggregator } from '../../candidateProviders';
+import { CandidateAggregator, type ProviderDiagnosticsEntry } from '../../candidateProviders';
 import type { RepositoryFailure } from '../../domainErrors';
 import type { EnrichedCandidate } from '../../enrichment';
 import { EnrichmentPipeline } from '../../enrichment';
+import type { ObservationSink } from '../../observability';
 import type { RecommendationMemoryRepository, TrackDnaRepository, UserDnaRepository } from '../../persistence';
 import { RecommendationQueue } from '../../queue';
 import { SIGNAL_GROUPS } from '../../rankingEngine';
@@ -76,6 +77,7 @@ export class BuildDiscoveryQueue {
   private readonly enrichmentPipeline: EnrichmentPipeline;
   private readonly rankingEngine: RankingEngine;
   private readonly recommendationMemoryRepository: RecommendationMemoryRepository;
+  private readonly observationSink: ObservationSink;
 
   constructor(
     userDnaRepository: UserDnaRepository,
@@ -84,6 +86,7 @@ export class BuildDiscoveryQueue {
     enrichmentPipeline: EnrichmentPipeline,
     rankingEngine: RankingEngine,
     recommendationMemoryRepository: RecommendationMemoryRepository,
+    observationSink: ObservationSink,
   ) {
     this.userDnaRepository = userDnaRepository;
     this.trackDnaRepository = trackDnaRepository;
@@ -91,6 +94,7 @@ export class BuildDiscoveryQueue {
     this.enrichmentPipeline = enrichmentPipeline;
     this.rankingEngine = rankingEngine;
     this.recommendationMemoryRepository = recommendationMemoryRepository;
+    this.observationSink = observationSink;
   }
 
   /**
@@ -111,7 +115,10 @@ export class BuildDiscoveryQueue {
     const userDnaResult = await this.ensureUserDna(userId, snapshot, now);
     if (!userDnaResult.success) return userDnaResult;
 
-    const { candidates } = await this.candidateAggregator.fetchAll({ limit: CANDIDATE_POOL_SIZE }, now);
+    const { candidates, rawCandidateCount, deduplicatedCandidateCount, providerDiagnostics } = await this.candidateAggregator.fetchAll(
+      { limit: CANDIDATE_POOL_SIZE },
+      now,
+    );
     const notExcluded = candidates.filter((candidate) => !excludeCandidateIds.has(candidate.candidateId));
 
     // M29: best-effort — a Recommendation Memory read failure for one
@@ -161,9 +168,55 @@ export class BuildDiscoveryQueue {
     // this milestone requested is done.
     this.logRecommendationTrace(candidates, persistedByCandidateId, rankedPool, topRanked);
 
+    // M31: pipeline instrumentation — see recordPipelineMeasurement's own
+    // docs for what each count measures. Purely observational (M13 Rule
+    // 1): touches no candidate selection, no ranking, nothing this method
+    // returns.
+    this.recordPipelineMeasurement(userId, rawCandidateCount, deduplicatedCandidateCount, enrichedCandidates.length, topRanked.length, providerDiagnostics, now);
+
     const queue = RecommendationQueue.create(topRanked);
 
     return success({ queue, enrichedCandidates: topEnriched });
+  }
+
+  /**
+   * M31: records one `CandidatePipelineMeasured` observation per
+   * `execute()` run, giving visibility into the real candidate pipeline
+   * without changing anything about it. Each count is named for the
+   * exact stage it measures (see `observability`'s own `CandidatePipelineMeasured`
+   * docs for the full field-by-field explanation):
+   *
+   * - rawCandidateCount / deduplicatedCandidateCount: from
+   *   CandidateAggregator, before/after its cross-provider dedup.
+   * - enrichedCandidateCount: how many candidates the EnrichmentPipeline
+   *   produced a TrackDNA for this run (after exclusion/memory
+   *   suppression, before ranking).
+   * - finalRankedPoolSize: the size of the RecommendationQueue this run
+   *   actually built.
+   * - providerDiagnostics: per-provider instrumentation (e.g.
+   *   LastFmCandidateProvider's own seed/artist/call counts).
+   *
+   * Never throws: a recording failure here must never affect the
+   * returned queue, the same "diagnostics must never break Discovery"
+   * posture `logRecommendationTrace` already established (M24).
+   */
+  private recordPipelineMeasurement(
+    userId: string,
+    rawCandidateCount: number,
+    deduplicatedCandidateCount: number,
+    enrichedCandidateCount: number,
+    finalRankedPoolSize: number,
+    providerDiagnostics: readonly ProviderDiagnosticsEntry[],
+    now: Date,
+  ): void {
+    try {
+      this.observationSink.recordCandidatePipelineMeasured(
+        { userId, rawCandidateCount, deduplicatedCandidateCount, enrichedCandidateCount, finalRankedPoolSize, providerDiagnostics },
+        now,
+      );
+    } catch (error) {
+      console.warn('[M31] Kunne ikke registrere pipeline-diagnostik (påvirker ikke Discovery):', error);
+    }
   }
 
   /** M24 diagnostic-only — see the block comment at its one call site. Never throws: a logging failure must never break Discovery. */

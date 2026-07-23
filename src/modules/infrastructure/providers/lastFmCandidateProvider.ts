@@ -51,6 +51,40 @@ interface CandidateArtist {
 }
 
 /**
+ * M31: one run's worth of pipeline-instrumentation counters, each
+ * documented with the exact stage it measures so a future comparison
+ * can never accidentally mix counts from different stages:
+ *
+ * - seedArtistCount: how many seed artist names `buildSeedNames()`
+ *   produced this run (Spotify top artists + local library artists,
+ *   deduplicated and capped) — the input to the artist-similarity fan-out.
+ * - candidateArtistCountRaw: how many seed→similar-artist relations
+ *   `findCandidateArtists()` considered in total, across every seed,
+ *   BEFORE collapsing artists that appear under multiple seeds into one.
+ * - candidateArtistCountDeduplicated: how many distinct candidate
+ *   artists survived that collapse — the number of artists
+ *   `collectCandidates()` actually fetches tracks and tags for.
+ * - lastFmCallCount: total Last.fm API call attempts made this run
+ *   (getSimilarArtists once per seed, getTopTracksForArtist +
+ *   getTopTags once per deduplicated candidate artist, getSimilarTracks
+ *   once per similarity seed track) — counted whether or not the call
+ *   ultimately succeeded, since a call was still made.
+ */
+interface LastFmProviderDiagnostics {
+  seedArtistCount: number;
+  candidateArtistCountRaw: number;
+  candidateArtistCountDeduplicated: number;
+  lastFmCallCount: number;
+}
+
+const createEmptyDiagnostics = (): LastFmProviderDiagnostics => ({
+  seedArtistCount: 0,
+  candidateArtistCountRaw: 0,
+  candidateArtistCountDeduplicated: 0,
+  lastFmCallCount: 0,
+});
+
+/**
  * Product Sprint 1's real `CandidateProvider`: the first (and only)
  * concrete implementation of the interface M3 defined but never filled
  * in. Self-contained on purpose — "Spotify Library → Candidate Provider"
@@ -75,24 +109,39 @@ interface CandidateArtist {
 export class LastFmCandidateProvider implements CandidateProvider {
   readonly providerName = 'lastfm';
 
+  /** M31: diagnostics from this instance's most recent `fetchCandidates()` call — `null` until the first call completes, overwritten (never accumulated) on every subsequent call. Purely observational: nothing here ever influences `fetchCandidates()`'s own behavior or return value. */
+  private lastFetchDiagnostics: Readonly<LastFmProviderDiagnostics> | null = null;
+
   async fetchCandidates(request: CandidateRequest): Promise<Candidate[]> {
+    const diagnostics = createEmptyDiagnostics();
     try {
       const topArtists = await getTopArtists(MAX_SEED_ARTISTS);
       const seedNames = await this.buildSeedNames(topArtists.map((artist) => artist.name));
+      diagnostics.seedArtistCount = seedNames.length;
       if (seedNames.length === 0) return [];
 
-      const candidateArtists = await this.findCandidateArtists(seedNames);
+      const candidateArtists = await this.findCandidateArtists(seedNames, diagnostics);
+      diagnostics.candidateArtistCountDeduplicated = candidateArtists.length;
       if (candidateArtists.length === 0) return [];
 
       const [candidates, trackSimilarityByKey] = await Promise.all([
-        this.collectCandidates(candidateArtists),
-        this.buildTrackSimilarityIndex(),
+        this.collectCandidates(candidateArtists, diagnostics),
+        this.buildTrackSimilarityIndex(diagnostics),
       ]);
       this.attachTrackSimilarity(candidates, trackSimilarityByKey);
       return candidates.slice(0, request.limit);
     } catch {
       return [];
+    } finally {
+      // M31: recorded however far this run got, even on an exception —
+      // partial visibility into a failed run is still real information.
+      this.lastFetchDiagnostics = diagnostics;
     }
+  }
+
+  /** M31: the optional CandidateProvider instrumentation hook — see LastFmProviderDiagnostics for what each field measures. */
+  getLastFetchDiagnostics(): Readonly<Record<string, number>> | null {
+    return this.lastFetchDiagnostics;
   }
 
   /**
@@ -123,10 +172,11 @@ export class LastFmCandidateProvider implements CandidateProvider {
    * the same "keep the best match" merge `findCandidateArtists` already
    * uses for artists.
    */
-  private async buildTrackSimilarityIndex(): Promise<Map<string, number>> {
+  private async buildTrackSimilarityIndex(diagnostics: LastFmProviderDiagnostics): Promise<Map<string, number>> {
     const libraryTracks = await getAllTracks().catch(() => []);
     const seedTracks = libraryTracks.slice(0, MAX_SIMILARITY_SEED_TRACKS).filter((track) => track.artists.length > 0);
 
+    diagnostics.lastFmCallCount += seedTracks.length;
     const results = await Promise.allSettled(seedTracks.map((track) => getSimilarTracks(track.artists[0].name, track.name)));
 
     const byKey = new Map<string, number>();
@@ -211,7 +261,8 @@ export class LastFmCandidateProvider implements CandidateProvider {
   }
 
   /** Similar artists per seed, merged and deduplicated by name (keeping the best match) — same shape as the old, already-proven LastFmRecommendationProvider logic (M15). */
-  private async findCandidateArtists(seedNames: string[]): Promise<CandidateArtist[]> {
+  private async findCandidateArtists(seedNames: string[], diagnostics: LastFmProviderDiagnostics): Promise<CandidateArtist[]> {
+    diagnostics.lastFmCallCount += seedNames.length;
     const results = await Promise.allSettled(seedNames.map((seed) => getSimilarArtists(seed)));
 
     const byName = new Map<string, CandidateArtist>();
@@ -219,6 +270,7 @@ export class LastFmCandidateProvider implements CandidateProvider {
       if (result.status === 'rejected') return;
       const seedArtist = seedNames[index];
       for (const artist of result.value.slice(0, MAX_SIMILAR_PER_SEED)) {
+        diagnostics.candidateArtistCountRaw += 1;
         const key = artist.name.toLowerCase();
         const existing = byName.get(key);
         if (!existing || artist.match > existing.match) {
@@ -240,7 +292,8 @@ export class LastFmCandidateProvider implements CandidateProvider {
    * default for every candidate from this provider — a known limitation,
    * not something faked here.
    */
-  private async collectCandidates(candidateArtists: CandidateArtist[]): Promise<Candidate[]> {
+  private async collectCandidates(candidateArtists: CandidateArtist[], diagnostics: LastFmProviderDiagnostics): Promise<Candidate[]> {
+    diagnostics.lastFmCallCount += candidateArtists.length * 2;
     const results = await Promise.allSettled(
       candidateArtists.map(async (artist) => {
         const [tracks, tags] = await Promise.all([

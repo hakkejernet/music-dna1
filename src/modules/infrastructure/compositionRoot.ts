@@ -24,12 +24,13 @@ import { InMemoryUserDnaRepository } from './repositories/inMemoryUserDnaReposit
  * stores.
  *
  * M14: constructs the one `InMemoryObservationSink` and injects it
- * into `LearnFromReaction` — the only Application Service that
- * integrates with Observability (M14 Rule 1). This file imports the
- * *concrete* `InMemoryObservationSink` (infrastructure already owns
- * concrete implementations, M11 Rule 1) but never the `ObservationSink`
- * *interface* itself — that contract stays known only to
- * `applicationLayer/` (verified by `src/architecture.test.ts`).
+ * into `LearnFromReaction` (M14 Rule 1). M31 adds `BuildDiscoveryQueue`
+ * as a second Application Service integrating with Observability — M14
+ * Rule 1 permits Application Layer generally, not just `LearnFromReaction`
+ * specifically. This file imports the *concrete* `InMemoryObservationSink`
+ * (infrastructure already owns concrete implementations, M11 Rule 1) but
+ * never the `ObservationSink` *interface* itself — that contract stays
+ * known only to `applicationLayer/` (verified by `src/architecture.test.ts`).
  *
  * Product Sprint 1: also constructs the one real `LastFmCandidateProvider`
  * (the first, and only, concrete `CandidateProvider` in the system),
@@ -58,7 +59,15 @@ export const buildAppContext = (): AppContext => {
       saveUserDna: new SaveUserDna(userDnaRepository),
       persistLearningEvent: new PersistLearningEvent(learningEventRepository),
       learnFromReaction: new LearnFromReaction(userDnaRepository, trackDnaRepository, learningEventRepository, DEFAULT_LEARNING_STRATEGIES, observationSink),
-      buildDiscoveryQueue: new BuildDiscoveryQueue(userDnaRepository, trackDnaRepository, candidateAggregator, enrichmentPipeline, rankingEngine, recommendationMemoryRepository),
+      buildDiscoveryQueue: new BuildDiscoveryQueue(
+        userDnaRepository,
+        trackDnaRepository,
+        candidateAggregator,
+        enrichmentPipeline,
+        rankingEngine,
+        recommendationMemoryRepository,
+        observationSink,
+      ),
       recordRecommendationOutcome: new RecordRecommendationOutcome(recommendationMemoryRepository),
     },
     observationSink,

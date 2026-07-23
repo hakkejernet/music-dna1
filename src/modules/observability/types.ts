@@ -56,7 +56,47 @@ export interface LearningApplied {
   readonly observedAt: string;
 }
 
-export type Observation = RecommendationShown | RecommendationAccepted | RecommendationRejected | RecommendationKnown | LearningApplied;
+/**
+ * M31: one BuildDiscoveryQueue.execute() run's pipeline counts, purely
+ * observational — never read by ranking, filtering, or anything else in
+ * the system. Every count is named for the exact stage it measures, so
+ * a future comparison can never accidentally mix counts from different
+ * stages:
+ *
+ * - rawCandidateCount: total candidates returned across all
+ *   CandidateProviders' own fetchCandidates() calls, before
+ *   CandidateAggregator's cross-provider dedup.
+ * - deduplicatedCandidateCount: the count after that cross-provider
+ *   dedup — i.e. how many distinct candidates entered the rest of this
+ *   pipeline run (memory filtering, enrichment, ranking).
+ * - enrichedCandidateCount: how many candidates the EnrichmentPipeline
+ *   actually produced a TrackDNA for this run (after excludeCandidateIds
+ *   and Recommendation Memory suppression, before ranking).
+ * - finalRankedPoolSize: the size of the RecommendationQueue this run
+ *   actually built — what the user will really be shown.
+ * - providerDiagnostics: per-provider instrumentation (e.g. seed artist
+ *   count, Last.fm call count for LastFmCandidateProvider) — see each
+ *   provider's own `getLastFetchDiagnostics()` for field meanings; only
+ *   present for providers that implement that optional hook.
+ */
+export interface CandidatePipelineMeasured {
+  readonly type: 'CandidatePipelineMeasured';
+  readonly userId: string;
+  readonly rawCandidateCount: number;
+  readonly deduplicatedCandidateCount: number;
+  readonly enrichedCandidateCount: number;
+  readonly finalRankedPoolSize: number;
+  readonly providerDiagnostics: readonly { readonly providerName: string; readonly diagnostics: Readonly<Record<string, number>> }[];
+  readonly observedAt: string;
+}
+
+export type Observation =
+  | RecommendationShown
+  | RecommendationAccepted
+  | RecommendationRejected
+  | RecommendationKnown
+  | LearningApplied
+  | CandidatePipelineMeasured;
 
 /**
  * The one contract between a future caller (an Application Service)
@@ -80,5 +120,16 @@ export interface ObservationSink {
   recordRecommendationRejected(input: { candidateRef: string; trackDnaRef: string }, now: Date): void;
   recordRecommendationKnown(input: { candidateRef: string; trackDnaRef: string }, now: Date): void;
   recordLearningApplied(input: { userId: string; eventId: string; changed: boolean }, now: Date): void;
+  recordCandidatePipelineMeasured(
+    input: {
+      userId: string;
+      rawCandidateCount: number;
+      deduplicatedCandidateCount: number;
+      enrichedCandidateCount: number;
+      finalRankedPoolSize: number;
+      providerDiagnostics: readonly { providerName: string; diagnostics: Readonly<Record<string, number>> }[];
+    },
+    now: Date,
+  ): void;
   getAll(): readonly Observation[];
 }

@@ -33,6 +33,34 @@ describe('InMemoryObservationSink — records each observation type as a describ
     expect(sink.getAll()).toEqual([{ type: 'LearningApplied', userId: 'user-1', eventId: 'evt-1', changed: true, observedAt: NOW.toISOString() }]);
   });
 
+  it('recordCandidatePipelineMeasured() stores all 8 pipeline counts plus a timestamp (M31)', () => {
+    const sink = new InMemoryObservationSink();
+    sink.recordCandidatePipelineMeasured(
+      {
+        userId: 'user-1',
+        rawCandidateCount: 120,
+        deduplicatedCandidateCount: 100,
+        enrichedCandidateCount: 95,
+        finalRankedPoolSize: 15,
+        providerDiagnostics: [{ providerName: 'lastfm', diagnostics: { seedArtistCount: 10, lastFmCallCount: 220 } }],
+      },
+      NOW,
+    );
+
+    expect(sink.getAll()).toEqual([
+      {
+        type: 'CandidatePipelineMeasured',
+        userId: 'user-1',
+        rawCandidateCount: 120,
+        deduplicatedCandidateCount: 100,
+        enrichedCandidateCount: 95,
+        finalRankedPoolSize: 15,
+        providerDiagnostics: [{ providerName: 'lastfm', diagnostics: { seedArtistCount: 10, lastFmCallCount: 220 } }],
+        observedAt: NOW.toISOString(),
+      },
+    ]);
+  });
+
   it('every record* method returns void — recording can never be branched on by a caller (M13 Rule 1)', () => {
     const sink = new InMemoryObservationSink();
     expect(sink.recordRecommendationShown({ candidateRef: 'c1', trackDnaRef: 't1', score: 50, providerNames: [] }, NOW)).toBeUndefined();
@@ -65,6 +93,25 @@ describe('InMemoryObservationSink — observations are frozen snapshots (M13 Rul
     // Mutating the caller's original array after the call must never affect the stored snapshot either.
     originalProviderNames.push('listenbrainz');
     expect(observation.providerNames).toEqual(['lastfm']);
+  });
+
+  it('a CandidatePipelineMeasured observation\'s providerDiagnostics array and each entry’s diagnostics object are frozen (M31)', () => {
+    const sink = new InMemoryObservationSink();
+    const originalDiagnostics = [{ providerName: 'lastfm', diagnostics: { seedArtistCount: 5 } }];
+    sink.recordCandidatePipelineMeasured(
+      { userId: 'user-1', rawCandidateCount: 1, deduplicatedCandidateCount: 1, enrichedCandidateCount: 1, finalRankedPoolSize: 1, providerDiagnostics: originalDiagnostics },
+      NOW,
+    );
+
+    const [observation] = sink.getAll();
+    if (observation.type !== 'CandidatePipelineMeasured') throw new Error('unreachable');
+    expect(Object.isFrozen(observation.providerDiagnostics)).toBe(true);
+    expect(Object.isFrozen(observation.providerDiagnostics[0])).toBe(true);
+    expect(Object.isFrozen(observation.providerDiagnostics[0].diagnostics)).toBe(true);
+
+    // Mutating the caller's original input after the call must never affect the stored snapshot.
+    originalDiagnostics[0].diagnostics.seedArtistCount = 999;
+    expect(observation.providerDiagnostics[0].diagnostics.seedArtistCount).toBe(5);
   });
 
   it('mutating a returned getAll() array never affects the sink\'s own stored observations', () => {

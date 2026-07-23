@@ -69,6 +69,33 @@ export class InMemoryObservationSink implements ObservationSink {
     );
   }
 
+  recordCandidatePipelineMeasured(
+    input: {
+      userId: string;
+      rawCandidateCount: number;
+      deduplicatedCandidateCount: number;
+      enrichedCandidateCount: number;
+      finalRankedPoolSize: number;
+      providerDiagnostics: readonly { providerName: string; diagnostics: Readonly<Record<string, number>> }[];
+    },
+    now: Date,
+  ): void {
+    this.observations.push(
+      freezeObservation({
+        type: 'CandidatePipelineMeasured',
+        userId: input.userId,
+        rawCandidateCount: input.rawCandidateCount,
+        deduplicatedCandidateCount: input.deduplicatedCandidateCount,
+        enrichedCandidateCount: input.enrichedCandidateCount,
+        finalRankedPoolSize: input.finalRankedPoolSize,
+        providerDiagnostics: Object.freeze(
+          input.providerDiagnostics.map((entry) => Object.freeze({ providerName: entry.providerName, diagnostics: Object.freeze({ ...entry.diagnostics }) })),
+        ),
+        observedAt: now.toISOString(),
+      }),
+    );
+  }
+
   /** Returns a fresh array copy every call — the individual `Observation`s are already frozen, but the array itself must not be a reference a caller could `push`/`splice` into. */
   getAll(): readonly Observation[] {
     return [...this.observations];

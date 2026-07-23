@@ -42,6 +42,18 @@ export interface CandidateRequest {
 export interface CandidateProvider {
   readonly providerName: string;
   fetchCandidates(request: CandidateRequest): Promise<Candidate[]>;
+
+  /**
+   * M31: optional, additive instrumentation hook — a provider that
+   * implements it reports named counters about its own most recent
+   * `fetchCandidates()` call, for visibility only. Never required
+   * (a provider that omits it is simply left out of
+   * `CandidateAggregatorResult.providerDiagnostics`), and never allowed
+   * to influence `fetchCandidates()`'s own behavior or return value —
+   * this is a read-only "what just happened" report, not a second
+   * output channel for candidates themselves.
+   */
+  getLastFetchDiagnostics?(): Readonly<Record<string, number>> | null;
 }
 
 /**

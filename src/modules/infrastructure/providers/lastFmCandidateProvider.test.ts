@@ -393,3 +393,113 @@ describe('LastFmCandidateProvider — attaches track-level similarity from the l
     expect(getSimilarTracks).not.toHaveBeenCalled();
   });
 });
+
+describe('LastFmCandidateProvider — pipeline instrumentation (M31, purely observational)', () => {
+  it('reports null before any fetchCandidates() call has completed', async () => {
+    const { LastFmCandidateProvider } = await import('./lastFmCandidateProvider');
+    const provider = new LastFmCandidateProvider();
+
+    expect(provider.getLastFetchDiagnostics()).toBeNull();
+  });
+
+  it('reports accurate counts for a straightforward one-seed, two-similar-artist run', async () => {
+    getTopArtists.mockResolvedValue([spotifyArtist('Radiohead')]);
+    getSimilarArtists.mockResolvedValue([similarArtist('Sigur Ros', 0.9), similarArtist('Boards of Canada', 0.8)]);
+    getTopTracksForArtist.mockResolvedValue([lastFmTrack('t1', 'Track', 'Artist', 100)]);
+    getTopTags.mockResolvedValue([]);
+
+    const { LastFmCandidateProvider } = await import('./lastFmCandidateProvider');
+    const provider = new LastFmCandidateProvider();
+    await provider.fetchCandidates({ limit: 10 });
+
+    expect(provider.getLastFetchDiagnostics()).toEqual({
+      seedArtistCount: 1,
+      candidateArtistCountRaw: 2,
+      candidateArtistCountDeduplicated: 2,
+      // 1 getSimilarArtists call + (2 candidate artists × 2 calls each) + 0 getSimilarTracks calls (no synced library).
+      lastFmCallCount: 5,
+    });
+  });
+
+  it('candidateArtistCountRaw exceeds candidateArtistCountDeduplicated when two seeds agree on the same similar artist', async () => {
+    getTopArtists.mockResolvedValue([spotifyArtist('Radiohead'), spotifyArtist('Sigur Ros')]);
+    getSimilarArtists.mockResolvedValue([similarArtist('Boards of Canada', 0.7)]);
+    getTopTracksForArtist.mockResolvedValue([]);
+    getTopTags.mockResolvedValue([]);
+
+    const { LastFmCandidateProvider } = await import('./lastFmCandidateProvider');
+    const provider = new LastFmCandidateProvider();
+    await provider.fetchCandidates({ limit: 10 });
+
+    const diagnostics = provider.getLastFetchDiagnostics();
+    expect(diagnostics?.candidateArtistCountRaw).toBe(2);
+    expect(diagnostics?.candidateArtistCountDeduplicated).toBe(1);
+  });
+
+  it('counts a seed’s getSimilarArtists attempt even when it fails', async () => {
+    getTopArtists.mockResolvedValue([spotifyArtist('Radiohead')]);
+    getSimilarArtists.mockRejectedValue(new Error('lastfm down'));
+
+    const { LastFmCandidateProvider } = await import('./lastFmCandidateProvider');
+    const provider = new LastFmCandidateProvider();
+    await provider.fetchCandidates({ limit: 10 });
+
+    expect(provider.getLastFetchDiagnostics()).toEqual({
+      seedArtistCount: 1,
+      candidateArtistCountRaw: 0,
+      candidateArtistCountDeduplicated: 0,
+      lastFmCallCount: 1,
+    });
+  });
+
+  it('includes getSimilarTracks calls in lastFmCallCount when the local library has synced tracks', async () => {
+    getTopArtists.mockResolvedValue([spotifyArtist('Radiohead')]);
+    getSimilarArtists.mockResolvedValue([similarArtist('Sigur Ros', 0.9)]);
+    getTopTracksForArtist.mockResolvedValue([lastFmTrack('t1', 'Track', 'Artist', 100)]);
+    getTopTags.mockResolvedValue([]);
+    getAllTracks.mockResolvedValue([spotifyTrack('lib-1', 'Karma Police', 'Radiohead')]);
+    getSimilarTracks.mockResolvedValue([]);
+
+    const { LastFmCandidateProvider } = await import('./lastFmCandidateProvider');
+    const provider = new LastFmCandidateProvider();
+    await provider.fetchCandidates({ limit: 10 });
+
+    // 1 getSimilarArtists + 2 (getTopTracksForArtist/getTopTags for the one candidate artist) + 1 getSimilarTracks.
+    expect(provider.getLastFetchDiagnostics()?.lastFmCallCount).toBe(4);
+  });
+
+  it('overwrites rather than accumulates diagnostics across two consecutive calls', async () => {
+    getTopArtists.mockResolvedValue([spotifyArtist('Radiohead')]);
+    getSimilarArtists.mockResolvedValue([similarArtist('Sigur Ros', 0.9)]);
+    getTopTracksForArtist.mockResolvedValue([lastFmTrack('t1', 'Track', 'Artist', 100)]);
+    getTopTags.mockResolvedValue([]);
+
+    const { LastFmCandidateProvider } = await import('./lastFmCandidateProvider');
+    const provider = new LastFmCandidateProvider();
+    await provider.fetchCandidates({ limit: 10 });
+    const firstRunDiagnostics = provider.getLastFetchDiagnostics();
+
+    getTopArtists.mockResolvedValue([]);
+    await provider.fetchCandidates({ limit: 10 });
+    const secondRunDiagnostics = provider.getLastFetchDiagnostics();
+
+    expect(firstRunDiagnostics?.seedArtistCount).toBe(1);
+    expect(secondRunDiagnostics).toEqual({ seedArtistCount: 0, candidateArtistCountRaw: 0, candidateArtistCountDeduplicated: 0, lastFmCallCount: 0 });
+  });
+
+  it('records whatever was measured so far — all zeros here — when the run fails before any counter is set', async () => {
+    getTopArtists.mockRejectedValue(new Error('spotify down'));
+
+    const { LastFmCandidateProvider } = await import('./lastFmCandidateProvider');
+    const provider = new LastFmCandidateProvider();
+    const candidates = await provider.fetchCandidates({ limit: 10 });
+
+    expect(candidates).toEqual([]);
+    expect(provider.getLastFetchDiagnostics()).toEqual({
+      seedArtistCount: 0,
+      candidateArtistCountRaw: 0,
+      candidateArtistCountDeduplicated: 0,
+      lastFmCallCount: 0,
+    });
+  });
+});
