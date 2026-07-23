@@ -1,6 +1,6 @@
 import { BuildDiscoveryQueue, LearnFromReaction, LoadUserDna, PersistLearningEvent, SaveUserDna } from '../applicationLayer';
 import { CandidateAggregator } from '../candidateProviders';
-import { EnrichmentPipeline, explicitMetadataEnricher, tagBasedEnricher } from '../enrichment';
+import { EnrichmentPipeline, explicitMetadataEnricher, popularityEnricher, tagBasedEnricher } from '../enrichment';
 import { DEFAULT_LEARNING_STRATEGIES } from '../learningEngine';
 import { InMemoryObservationSink } from '../observability';
 import { RuleBasedRankingEngine } from '../rankingEngine';
@@ -46,7 +46,7 @@ export const buildAppContext = (): AppContext => {
   const observationSink = new InMemoryObservationSink();
 
   const candidateAggregator = new CandidateAggregator([new LastFmCandidateProvider()]);
-  const enrichmentPipeline = new EnrichmentPipeline([tagBasedEnricher, explicitMetadataEnricher]);
+  const enrichmentPipeline = new EnrichmentPipeline([tagBasedEnricher, explicitMetadataEnricher, popularityEnricher]);
   const rankingEngine = new RuleBasedRankingEngine();
 
   return {
