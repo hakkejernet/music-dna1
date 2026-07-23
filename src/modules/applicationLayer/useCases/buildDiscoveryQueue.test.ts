@@ -3,7 +3,7 @@ import { CandidateAggregator } from '../../candidateProviders';
 import type { Candidate, CandidateProvider, CandidateRequest } from '../../candidateProviders';
 import type { RepositoryFailure } from '../../domainErrors';
 import { repositoryFailure } from '../../domainErrors';
-import { explicitMetadataEnricher, EnrichmentPipeline, tagBasedEnricher } from '../../enrichment';
+import { explicitMetadataEnricher, EnrichmentPipeline, tagBasedEnricher, trackSimilarityEnricher } from '../../enrichment';
 import type { RecommendationMemoryRepository, TrackDnaRepository, UserDnaRepository } from '../../persistence';
 import type { RecommendationMemoryEntry } from '../../recommendationMemory';
 import { RuleBasedRankingEngine } from '../../rankingEngine';
@@ -104,7 +104,7 @@ const candidate = (id: string, title: string, artist: string, tags: string[]): C
   contributions: [{ providerName: 'fake', externalIds: {}, rawMetadata: { tags, explicit: false } }],
 });
 
-const buildPipeline = () => new EnrichmentPipeline([tagBasedEnricher, explicitMetadataEnricher]);
+const buildPipeline = () => new EnrichmentPipeline([tagBasedEnricher, explicitMetadataEnricher, trackSimilarityEnricher]);
 
 const expectSuccess = <T>(result: Result<T, unknown>): T => {
   if (!result.success) throw new Error(`expected Success, got Failure: ${JSON.stringify(result.error)}`);
@@ -491,5 +491,54 @@ describe('BuildDiscoveryQueue — filters out currently-suppressed candidates vi
 
     const returnedIds = result.enrichedCandidates.map((enriched) => enriched.candidate.candidateId);
     expect(returnedIds).toContain('c1');
+  });
+});
+
+describe('BuildDiscoveryQueue — track-level similarity data moves rank order end-to-end (M30)', () => {
+  it('ranks a candidate carrying a trackSimilarityMatch strictly above an otherwise-identical candidate without one', async () => {
+    const withMatch: Candidate = {
+      candidateId: 'similar',
+      title: 'Similar Track',
+      artists: ['ArtistA'],
+      contributions: [{ providerName: 'fake', externalIds: {}, rawMetadata: { tags: [], explicit: false, trackSimilarityMatch: 0.9 } }],
+    };
+    const withoutMatch: Candidate = {
+      candidateId: 'plain',
+      title: 'Plain Track',
+      artists: ['ArtistB'],
+      contributions: [{ providerName: 'fake', externalIds: {}, rawMetadata: { tags: [], explicit: false } }],
+    };
+
+    const useCase = new BuildDiscoveryQueue(
+      new FakeUserDnaRepository(null),
+      new FakeTrackDnaRepository(),
+      new CandidateAggregator([new FakeCandidateProvider([withMatch, withoutMatch])]),
+      buildPipeline(),
+      new RuleBasedRankingEngine(),
+      new FakeRecommendationMemoryRepository(),
+    );
+
+    const result = expectSuccess(await useCase.execute('user-1', EMPTY_SNAPSHOT, 2, NOW));
+    const returnedIds = result.enrichedCandidates.map((enriched) => enriched.candidate.candidateId);
+
+    expect(returnedIds).toEqual(['similar', 'plain']);
+  });
+
+  it('stays fully inert — a plain candidateRef tie-break, same as before M30 — when no candidate carries trackSimilarityMatch', async () => {
+    const a = candidate('a', 'Track A', 'ArtistA', []);
+    const b = candidate('b', 'Track B', 'ArtistB', []);
+    const useCase = new BuildDiscoveryQueue(
+      new FakeUserDnaRepository(null),
+      new FakeTrackDnaRepository(),
+      new CandidateAggregator([new FakeCandidateProvider([b, a])]),
+      buildPipeline(),
+      new RuleBasedRankingEngine(),
+      new FakeRecommendationMemoryRepository(),
+    );
+
+    const result = expectSuccess(await useCase.execute('user-1', EMPTY_SNAPSHOT, 2, NOW));
+    const returnedIds = result.enrichedCandidates.map((enriched) => enriched.candidate.candidateId);
+
+    expect(returnedIds).toEqual(['a', 'b']);
   });
 });

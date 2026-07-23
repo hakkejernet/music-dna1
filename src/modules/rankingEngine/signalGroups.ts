@@ -9,6 +9,8 @@ export const SIGNAL_GROUPS = {
   mainstreamMatch: ['mainstream'],
   explicitMatch: ['explicitness'],
   durationMatch: ['songLength'],
+  /** M30: how closely, per Last.fm's own track-similarity graph, a candidate matches a track already in the user's library. */
+  trackSimilarityMatch: ['trackSimilarity'],
 } as const;
 
 export type ScoreBreakdownKey = keyof typeof SIGNAL_GROUPS;

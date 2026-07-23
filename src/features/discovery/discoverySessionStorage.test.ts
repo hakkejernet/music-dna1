@@ -29,7 +29,7 @@ const rankedCandidate = (candidateRef: string): RankedCandidate => ({
   candidateRef,
   trackDnaRef: candidateRef,
   score: 1,
-  scoreBreakdown: { genreMatch: 1, mainstreamMatch: 0, explicitMatch: 0, durationMatch: 0 },
+  scoreBreakdown: { genreMatch: 1, mainstreamMatch: 0, explicitMatch: 0, durationMatch: 0, trackSimilarityMatch: 0 },
   explanations: [],
   rankedAt: '2026-01-01T00:00:00.000Z',
 });

@@ -1,6 +1,6 @@
-import { getTopTags, getSimilarArtists, getTopTracksForArtist } from '../../lastfm';
+import { getTopTags, getSimilarArtists, getSimilarTracks, getTopTracksForArtist } from '../../lastfm';
 import { getTopArtists } from '../../spotify';
-import { getAllArtists } from '../../storage';
+import { getAllArtists, getAllTracks } from '../../storage';
 import type { Candidate, CandidateProvider, CandidateRequest } from '../../candidateProviders';
 
 /**
@@ -31,6 +31,17 @@ const MAX_TRACKS_PER_ARTIST = 8;
  * top-artists-only ceiling (30 vs. 10).
  */
 const MAX_TOTAL_SEED_ARTISTS = 30;
+
+/**
+ * M30: a hard ceiling on how many of the user's own synced library
+ * tracks are used as `track.getsimilar` seeds — bounds Last.fm call
+ * volume independent of library size, the same "fixed, documented,
+ * undertuned constant" posture as MAX_TOTAL_SEED_ARTISTS above.
+ */
+const MAX_SIMILARITY_SEED_TRACKS = 15;
+
+/** Exact, normalized (trimmed, lowercased) title+artist match — no fuzzy or ISRC-based matching. A known limitation, not an oversight: Last.fm's track.getsimilar response carries no reliable cross-referenceable id. */
+const normalizeTrackKey = (title: string, artist: string): string => `${title.trim().toLowerCase()}|||${artist.trim().toLowerCase()}`;
 
 interface CandidateArtist {
   name: string;
@@ -73,10 +84,82 @@ export class LastFmCandidateProvider implements CandidateProvider {
       const candidateArtists = await this.findCandidateArtists(seedNames);
       if (candidateArtists.length === 0) return [];
 
-      const candidates = await this.collectCandidates(candidateArtists);
+      const [candidates, trackSimilarityByKey] = await Promise.all([
+        this.collectCandidates(candidateArtists),
+        this.buildTrackSimilarityIndex(),
+      ]);
+      this.attachTrackSimilarity(candidates, trackSimilarityByKey);
       return candidates.slice(0, request.limit);
     } catch {
       return [];
+    }
+  }
+
+  /**
+   * M30: genuinely track-level similarity data (Last.fm's `track.getsimilar`),
+   * seeded from a bounded, deterministic slice of the user's own synced
+   * local library (`modules/storage.getAllTracks()`) — zero new network
+   * calls beyond the fixed `MAX_SIMILARITY_SEED_TRACKS` ceiling, and
+   * completely independent of the artist-similarity chain the rest of
+   * this provider already runs on.
+   *
+   * Seed-selection policy, stated explicitly (same discipline as M28's
+   * `buildSeedNames`): the first `MAX_SIMILARITY_SEED_TRACKS` tracks in
+   * `getAllTracks()`'s own return order — the `tracks` object store uses
+   * `keyPath: 'id'` (the track's immutable Spotify id), and IndexedDB's
+   * `getAll()` returns records in ascending order of that key. No
+   * re-sorting, weighting, or ranking by recency or play count. The same
+   * local library always produces the same seed set.
+   *
+   * A missing/never-synced/failing library degrades to an empty index
+   * via this method's own `.catch(() => [])` — deliberately local, so a
+   * storage-layer problem here never touches artist-based candidate
+   * generation at all. A track with no listed artist is skipped (nothing
+   * to query `track.getsimilar` with). Each seed's own `getSimilarTracks`
+   * call is isolated via `Promise.allSettled`, mirroring
+   * `findCandidateArtists`'s own per-seed error isolation — one failing
+   * seed never discards the others' results. When multiple seeds report
+   * a match for the same normalized key, the highest match score wins,
+   * the same "keep the best match" merge `findCandidateArtists` already
+   * uses for artists.
+   */
+  private async buildTrackSimilarityIndex(): Promise<Map<string, number>> {
+    const libraryTracks = await getAllTracks().catch(() => []);
+    const seedTracks = libraryTracks.slice(0, MAX_SIMILARITY_SEED_TRACKS).filter((track) => track.artists.length > 0);
+
+    const results = await Promise.allSettled(seedTracks.map((track) => getSimilarTracks(track.artists[0].name, track.name)));
+
+    const byKey = new Map<string, number>();
+    for (const result of results) {
+      if (result.status === 'rejected') continue;
+      for (const similar of result.value) {
+        const key = normalizeTrackKey(similar.name, similar.artistName);
+        const existing = byKey.get(key);
+        if (existing === undefined || similar.match > existing) {
+          byKey.set(key, similar.match);
+        }
+      }
+    }
+    return byKey;
+  }
+
+  /**
+   * M30: purely additive — sets `rawMetadata.trackSimilarityMatch` only
+   * on a genuine normalized title+primary-artist match against
+   * `buildTrackSimilarityIndex()`'s own index; every candidate without a
+   * match, and every other `rawMetadata` field, is left untouched.
+   */
+  private attachTrackSimilarity(candidates: Candidate[], trackSimilarityByKey: Map<string, number>): void {
+    for (const candidate of candidates) {
+      const primaryArtist = candidate.artists[0];
+      if (primaryArtist === undefined) continue;
+
+      const match = trackSimilarityByKey.get(normalizeTrackKey(candidate.title, primaryArtist));
+      if (match === undefined) continue;
+
+      const contribution = candidate.contributions[0];
+      if (!contribution || typeof contribution.rawMetadata !== 'object' || contribution.rawMetadata === null) continue;
+      contribution.rawMetadata = { ...(contribution.rawMetadata as Record<string, unknown>), trackSimilarityMatch: match };
     }
   }
 

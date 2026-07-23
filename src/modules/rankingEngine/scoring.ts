@@ -99,6 +99,7 @@ export const explainBreakdown = (breakdown: ScoreBreakdown): string[] => {
     mainstreamMatch: 'Mainstream-niveau matcher din profil',
     explicitMatch: 'Explicit-indhold matcher din profil',
     durationMatch: 'Sanglængde matcher din profil',
+    trackSimilarityMatch: 'Minder om et spor i dit bibliotek',
   };
   return SCORE_BREAKDOWN_KEYS.filter((key) => breakdown[key] > 0).map(
     (key) => `${labels[key]} (${Math.round(breakdown[key] * 100)}%)`,

@@ -6,6 +6,15 @@ export interface LastFmSimilarArtist {
   url: string;
 }
 
+export interface LastFmSimilarTrack {
+  name: string;
+  artistName: string;
+  mbid: string | null;
+  /** 0–1 similarity score as reported by Last.fm. */
+  match: number;
+  url: string;
+}
+
 export interface LastFmImage {
   url: string;
   size: string;

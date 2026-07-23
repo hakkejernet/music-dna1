@@ -97,7 +97,12 @@ describe('buildColdStartUserDna — Design Principle 4 (no single feature depend
     const snapshot: LibrarySnapshot = { topArtists: [], savedTracks: [] };
     expect(() => buildColdStartUserDna('user-1', snapshot, FIXED_NOW)).not.toThrow();
     const dna = buildColdStartUserDna('user-1', snapshot, FIXED_NOW);
-    for (const reading of Object.values(dna.signals)) {
+    for (const [signalKey, reading] of Object.entries(dna.signals)) {
+      // M30: trackSimilarity is the one signal not derived from
+      // topArtists/savedTracks at all — it is seeded unconditionally
+      // (see coldStart.ts), so it alone is expected to carry the fixed
+      // cold-start confidence even for a fully empty library.
+      if (signalKey === 'trackSimilarity') continue;
       expect(reading.confidence).toBe(0);
     }
   });
@@ -142,9 +147,23 @@ describe('buildColdStartUserDna — acceptance criteria (docs/IMPLEMENTATION_ROA
 
     expect(dna.userId).toBe('user-empty');
     expect(dna.coldStart).toBe(true);
-    for (const reading of Object.values(dna.signals)) {
-      expect(reading.confidence).toBe(0);
+    for (const [signalKey, reading] of Object.entries(dna.signals)) {
+      // M30: see the equivalent note in the "empty arrays" test above.
+      if (signalKey !== 'trackSimilarity') expect(reading.confidence).toBe(0);
       expect(Number.isFinite(reading.value)).toBe(true);
     }
+  });
+});
+
+describe('buildColdStartUserDna — trackSimilarity is seeded uniformly with every other cold-start signal (M30)', () => {
+  it('always seeds trackSimilarity at value 1, confidence COLD_START_CONFIDENCE, regardless of snapshot content', () => {
+    const empty: LibrarySnapshot = { topArtists: null, savedTracks: null };
+    const dna = buildColdStartUserDna('user-1', empty, FIXED_NOW);
+    expect(dna.signals.trackSimilarity).toEqual({ value: 1, confidence: 0.2 });
+  });
+
+  it('seeds the identical trackSimilarity reading for a rich library too — its value is not derived from library content', () => {
+    const dna = buildColdStartUserDna('user-1', richLibrary, FIXED_NOW);
+    expect(dna.signals.trackSimilarity).toEqual({ value: 1, confidence: 0.2 });
   });
 });

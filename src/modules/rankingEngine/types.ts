@@ -12,6 +12,8 @@ export interface ScoreBreakdown {
   mainstreamMatch: number;
   explicitMatch: number;
   durationMatch: number;
+  /** M30: how closely a candidate matches a track already in the user's library, per Last.fm's own track-similarity graph. */
+  trackSimilarityMatch: number;
 }
 
 /**

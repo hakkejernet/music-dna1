@@ -69,6 +69,27 @@ const buildSongLengthSignal = (savedTracks: LibraryTrackSummary[] | null): Recor
 };
 
 /**
+ * M30: unlike every other signal in this module, `trackSimilarity`'s
+ * value is not derived from `topArtists` or `savedTracks` at all — it is
+ * seeded unconditionally, even for a fully empty snapshot. This is a
+ * deliberate, structural statement of what the `trackSimilarityMatch`
+ * ranking bucket measures ("closeness to a track the user already,
+ * verifiably likes" has no plausible opposite preference the way a
+ * genre or mainstream-level *estimate* could turn out wrong), not a
+ * guess about this particular user.
+ *
+ * It still uses the exact same COLD_START_CONFIDENCE every other
+ * cold-start signal uses — UserDNA's cold-start confidence policy stays
+ * uniform. If trackSimilarity should ever carry more or less weight in
+ * ranking than another bucket, that is a decision for the enricher's own
+ * confidence (TrackDNA side, see trackSimilarityEnricher) or a future
+ * ranking heuristic — never a special-cased confidence model here.
+ */
+const buildTrackSimilaritySignal = (): Record<string, SignalReading> => ({
+  trackSimilarity: { value: 1, confidence: COLD_START_CONFIDENCE },
+});
+
+/**
  * Pure and deterministic (Cold Start Design Principle 1): identical
  * (userId, snapshot, now) always produces an identical UserDNA. `now` is
  * an explicit parameter rather than read internally (no `Date.now()`
@@ -94,6 +115,7 @@ export const buildColdStartUserDna = (userId: string, snapshot: LibrarySnapshot,
     ...buildMainstreamSignal(snapshot.topArtists),
     ...buildExplicitnessSignal(snapshot.savedTracks),
     ...buildSongLengthSignal(snapshot.savedTracks),
+    ...buildTrackSimilaritySignal(),
   };
 
   return {

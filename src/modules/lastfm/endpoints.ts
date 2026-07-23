@@ -1,5 +1,5 @@
 import { lastFmGet } from './client';
-import type { LastFmImage, LastFmSimilarArtist, LastFmTrack } from './types';
+import type { LastFmImage, LastFmSimilarArtist, LastFmSimilarTrack, LastFmTrack } from './types';
 
 const slugify = (value: string): string =>
   value
@@ -33,6 +33,39 @@ export const getSimilarArtists = async (artistName: string): Promise<LastFmSimil
     mbid: artist.mbid || null,
     match: Number(artist.match) || 0,
     url: artist.url,
+  }));
+};
+
+interface RawSimilarTrack {
+  name: string;
+  artist: { name: string; mbid?: string };
+  mbid?: string;
+  match: string;
+  url: string;
+}
+
+interface RawSimilarTracksResponse {
+  similartracks?: { track?: RawSimilarTrack[] };
+}
+
+const SIMILAR_TRACKS_LIMIT = 10;
+
+/** M30: track.getsimilar — genuinely track-level similarity (unlike artist.getsimilar, already used by findCandidateArtists), used to feed trackSimilarityEnricher via LastFmCandidateProvider's own similarity index. */
+export const getSimilarTracks = async (artistName: string, trackName: string): Promise<LastFmSimilarTrack[]> => {
+  const data = await lastFmGet<RawSimilarTracksResponse>({
+    method: 'track.getsimilar',
+    artist: artistName,
+    track: trackName,
+    autocorrect: '1',
+    limit: String(SIMILAR_TRACKS_LIMIT),
+  });
+
+  return (data.similartracks?.track ?? []).map((track) => ({
+    name: track.name,
+    artistName: track.artist?.name ?? '',
+    mbid: track.mbid || null,
+    match: Number(track.match) || 0,
+    url: track.url,
   }));
 };
 

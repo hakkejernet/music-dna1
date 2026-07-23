@@ -132,6 +132,12 @@ export const SIGNAL_CATALOG: readonly SignalDefinition[] = [
     valueRange: [0, 1],
     description: 'Hvor bredt kendt/populær sangen/kunstneren er — 0 er meget niche, 1 er meget mainstream.',
   },
+  {
+    signalKey: 'trackSimilarity',
+    category: 'kulturel',
+    valueRange: [0, 1],
+    description: 'Hvor tæt sangen, ifølge Last.fms egen track-til-track-similaritet, matcher et spor brugeren allerede har i sit bibliotek.',
+  },
 
   // --- Struktur ---
   {

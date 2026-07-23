@@ -6,7 +6,7 @@ const makeRanked = (candidateRef: string, score: number): RankedCandidate => ({
   candidateRef,
   trackDnaRef: `track-${candidateRef}`,
   score,
-  scoreBreakdown: { genreMatch: 0, mainstreamMatch: 0, explicitMatch: 0, durationMatch: 0 },
+  scoreBreakdown: { genreMatch: 0, mainstreamMatch: 0, explicitMatch: 0, durationMatch: 0, trackSimilarityMatch: 0 },
   explanations: [],
   rankedAt: '2026-01-01T00:00:00.000Z',
 });
