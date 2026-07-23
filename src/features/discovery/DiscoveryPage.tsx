@@ -162,6 +162,19 @@ export const DiscoveryPage = () => {
   };
 
   /**
+   * M29: independent of `recordReaction`/UserDNA — this only ever touches
+   * Recommendation Memory. Fire-and-forget, same posture as `recordReaction`:
+   * never blocks or alters what the user already sees.
+   */
+  const recordRecommendationOutcome = (candidateId: string, outcome: LearningEvent['reactionType'], now: Date) => {
+    void appContext.useCases.recordRecommendationOutcome.execute(candidateId, outcome, now).then((result) => {
+      if (!result.success) {
+        console.warn('[discovery] Kunne ikke gemme recommendation-outcome:', result.error);
+      }
+    });
+  };
+
+  /**
    * M19: fetches a fresh batch that excludes every candidate already
    * shown this session (buildDiscoveryQueue.execute()'s excludeCandidateIds),
    * so a refill never reproduces the same songs. Used only when the
@@ -204,8 +217,12 @@ export const DiscoveryPage = () => {
     setLastAction(ACTION_LABELS[reactionType]);
 
     if (event) {
-      const feedback = processReactionEvent(event, new Date());
-      if (feedback.accepted) recordReaction(feedback.learningEvent);
+      const now = new Date();
+      const feedback = processReactionEvent(event, now);
+      if (feedback.accepted) {
+        recordReaction(feedback.learningEvent);
+        recordRecommendationOutcome(feedback.learningEvent.candidateRef, feedback.learningEvent.reactionType, now);
+      }
     }
 
     if (nextQueue.current() === null) {

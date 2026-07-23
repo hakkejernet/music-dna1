@@ -1,4 +1,4 @@
-import { BuildDiscoveryQueue, LearnFromReaction, LoadUserDna, PersistLearningEvent, SaveUserDna } from '../applicationLayer';
+import { BuildDiscoveryQueue, LearnFromReaction, LoadUserDna, PersistLearningEvent, RecordRecommendationOutcome, SaveUserDna } from '../applicationLayer';
 import { CandidateAggregator } from '../candidateProviders';
 import { EnrichmentPipeline, explicitMetadataEnricher, popularityEnricher, tagBasedEnricher } from '../enrichment';
 import { DEFAULT_LEARNING_STRATEGIES } from '../learningEngine';
@@ -7,6 +7,7 @@ import { RuleBasedRankingEngine } from '../rankingEngine';
 import type { AppContext } from './appContext';
 import { LastFmCandidateProvider } from './providers/lastFmCandidateProvider';
 import { InMemoryLearningEventRepository } from './repositories/inMemoryLearningEventRepository';
+import { InMemoryRecommendationMemoryRepository } from './repositories/inMemoryRecommendationMemoryRepository';
 import { InMemoryTrackDnaRepository } from './repositories/inMemoryTrackDnaRepository';
 import { InMemoryUserDnaRepository } from './repositories/inMemoryUserDnaRepository';
 
@@ -43,6 +44,7 @@ export const buildAppContext = (): AppContext => {
   const userDnaRepository = new InMemoryUserDnaRepository();
   const trackDnaRepository = new InMemoryTrackDnaRepository();
   const learningEventRepository = new InMemoryLearningEventRepository();
+  const recommendationMemoryRepository = new InMemoryRecommendationMemoryRepository();
   const observationSink = new InMemoryObservationSink();
 
   const candidateAggregator = new CandidateAggregator([new LastFmCandidateProvider()]);
@@ -50,13 +52,14 @@ export const buildAppContext = (): AppContext => {
   const rankingEngine = new RuleBasedRankingEngine();
 
   return {
-    repositories: { userDnaRepository, trackDnaRepository, learningEventRepository },
+    repositories: { userDnaRepository, trackDnaRepository, learningEventRepository, recommendationMemoryRepository },
     useCases: {
       loadUserDna: new LoadUserDna(userDnaRepository),
       saveUserDna: new SaveUserDna(userDnaRepository),
       persistLearningEvent: new PersistLearningEvent(learningEventRepository),
       learnFromReaction: new LearnFromReaction(userDnaRepository, trackDnaRepository, learningEventRepository, DEFAULT_LEARNING_STRATEGIES, observationSink),
-      buildDiscoveryQueue: new BuildDiscoveryQueue(userDnaRepository, trackDnaRepository, candidateAggregator, enrichmentPipeline, rankingEngine),
+      buildDiscoveryQueue: new BuildDiscoveryQueue(userDnaRepository, trackDnaRepository, candidateAggregator, enrichmentPipeline, rankingEngine, recommendationMemoryRepository),
+      recordRecommendationOutcome: new RecordRecommendationOutcome(recommendationMemoryRepository),
     },
     observationSink,
   };

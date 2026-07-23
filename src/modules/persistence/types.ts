@@ -1,5 +1,6 @@
 import type { RepositoryFailure } from '../domainErrors';
 import type { LearningEvent } from '../feedbackPipeline';
+import type { RecommendationMemoryEntry } from '../recommendationMemory';
 import type { Result } from '../result';
 import type { TrackDNA } from '../trackDna';
 import type { UserDNA } from '../userDna';
@@ -45,3 +46,20 @@ export type LearningEventRepository = Repository<LearningEvent>;
 
 /** Keyed by `TrackDNA`'s own `trackId`. Built per Rule 2's own "TrackDNA (hvis nødvendigt)" — see Review Report for why it's included now rather than deferred. */
 export type TrackDnaRepository = Repository<TrackDNA>;
+
+/**
+ * M29: deliberately NOT a `Repository<T>` alias — Recommendation Memory
+ * needs exactly two operations (read one entry, write one entry); a
+ * generic `getAll()` is never called by anything in this milestone, so
+ * it is not part of this contract at all (M29 Rule 3: no convenience
+ * methods beyond what's immediately required). `get`/`put` naming
+ * (rather than `getById`/`save`) reflects that this is its own,
+ * intentionally minimal contract, not the shared generic one — and that
+ * `put()` itself carries no business rule: the M29 Rule 2 immutability
+ * requirement ("ownership is permanent") is decided entirely by
+ * `recommendationMemory`'s own `buildMemoryEntry()`, never here.
+ */
+export interface RecommendationMemoryRepository {
+  get(candidateId: string): Promise<Result<RecommendationMemoryEntry | null, RepositoryFailure>>;
+  put(entry: RecommendationMemoryEntry): Promise<Result<void, RepositoryFailure>>;
+}

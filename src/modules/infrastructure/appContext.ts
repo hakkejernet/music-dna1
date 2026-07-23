@@ -1,6 +1,6 @@
-import type { BuildDiscoveryQueue, LearnFromReaction, LoadUserDna, PersistLearningEvent, SaveUserDna } from '../applicationLayer';
+import type { BuildDiscoveryQueue, LearnFromReaction, LoadUserDna, PersistLearningEvent, RecordRecommendationOutcome, SaveUserDna } from '../applicationLayer';
 import type { InMemoryObservationSink } from '../observability';
-import type { LearningEventRepository, TrackDnaRepository, UserDnaRepository } from '../persistence';
+import type { LearningEventRepository, RecommendationMemoryRepository, TrackDnaRepository, UserDnaRepository } from '../persistence';
 
 /**
  * Describes the system's wired-together dependencies (M11 Rule 6) —
@@ -22,6 +22,7 @@ export interface AppContext {
     userDnaRepository: UserDnaRepository;
     trackDnaRepository: TrackDnaRepository;
     learningEventRepository: LearningEventRepository;
+    recommendationMemoryRepository: RecommendationMemoryRepository;
   };
   useCases: {
     loadUserDna: LoadUserDna;
@@ -29,6 +30,7 @@ export interface AppContext {
     persistLearningEvent: PersistLearningEvent;
     learnFromReaction: LearnFromReaction;
     buildDiscoveryQueue: BuildDiscoveryQueue;
+    recordRecommendationOutcome: RecordRecommendationOutcome;
   };
   observationSink: InMemoryObservationSink;
 }

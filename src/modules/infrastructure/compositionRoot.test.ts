@@ -75,12 +75,18 @@ describe('AppContext — describes dependencies only, not runtime state (M11 Rul
     // is itself only a wired dependency (the concrete InMemoryObservationSink),
     // not runtime state, so it belongs here under the same M11 Rule 6.
     expect(Object.keys(appContext).sort()).toEqual(['observationSink', 'repositories', 'useCases']);
-    expect(Object.keys(appContext.repositories).sort()).toEqual(['learningEventRepository', 'trackDnaRepository', 'userDnaRepository']);
+    expect(Object.keys(appContext.repositories).sort()).toEqual([
+      'learningEventRepository',
+      'recommendationMemoryRepository',
+      'trackDnaRepository',
+      'userDnaRepository',
+    ]);
     expect(Object.keys(appContext.useCases).sort()).toEqual([
       'buildDiscoveryQueue',
       'learnFromReaction',
       'loadUserDna',
       'persistLearningEvent',
+      'recordRecommendationOutcome',
       'saveUserDna',
     ]);
   });

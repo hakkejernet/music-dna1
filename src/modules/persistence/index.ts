@@ -1,1 +1,1 @@
-export type { LearningEventRepository, Repository, TrackDnaRepository, UserDnaRepository } from './types';
+export type { LearningEventRepository, RecommendationMemoryRepository, Repository, TrackDnaRepository, UserDnaRepository } from './types';

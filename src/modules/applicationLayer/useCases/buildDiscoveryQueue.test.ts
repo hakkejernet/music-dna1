@@ -4,7 +4,8 @@ import type { Candidate, CandidateProvider, CandidateRequest } from '../../candi
 import type { RepositoryFailure } from '../../domainErrors';
 import { repositoryFailure } from '../../domainErrors';
 import { explicitMetadataEnricher, EnrichmentPipeline, tagBasedEnricher } from '../../enrichment';
-import type { TrackDnaRepository, UserDnaRepository } from '../../persistence';
+import type { RecommendationMemoryRepository, TrackDnaRepository, UserDnaRepository } from '../../persistence';
+import type { RecommendationMemoryEntry } from '../../recommendationMemory';
 import { RuleBasedRankingEngine } from '../../rankingEngine';
 import { failure, success, type Result } from '../../result';
 import type { TrackDNA } from '../../trackDna';
@@ -59,6 +60,27 @@ class FakeTrackDnaRepository implements TrackDnaRepository {
   }
 }
 
+/** M29: a Map-backed fake mirroring InMemoryRecommendationMemoryRepository's own get/put contract — seedable with pre-existing entries so tests can assert on suppression behavior without touching real persistence. */
+class FakeRecommendationMemoryRepository implements RecommendationMemoryRepository {
+  private readonly entries: Map<string, RecommendationMemoryEntry>;
+  private readonly failNextGet: RepositoryFailure | null;
+
+  constructor(initial: RecommendationMemoryEntry[] = [], options: { failNextGet?: RepositoryFailure } = {}) {
+    this.entries = new Map(initial.map((entry) => [entry.candidateId, entry]));
+    this.failNextGet = options.failNextGet ?? null;
+  }
+
+  async get(candidateId: string): Promise<Result<RecommendationMemoryEntry | null, RepositoryFailure>> {
+    if (this.failNextGet && candidateId === 'c-fails') return failure(this.failNextGet);
+    return success(this.entries.get(candidateId) ?? null);
+  }
+
+  async put(entry: RecommendationMemoryEntry): Promise<Result<void, RepositoryFailure>> {
+    this.entries.set(entry.candidateId, entry);
+    return success(undefined);
+  }
+}
+
 /** A CandidateProvider test double — the only fake in this suite; CandidateAggregator, EnrichmentPipeline, and RuleBasedRankingEngine below are all the real, unmodified implementations. */
 class FakeCandidateProvider implements CandidateProvider {
   readonly providerName = 'fake';
@@ -100,6 +122,7 @@ describe('BuildDiscoveryQueue — the full Spotify Library → Candidate Provide
       new CandidateAggregator([provider]),
       buildPipeline(),
       new RuleBasedRankingEngine(),
+      new FakeRecommendationMemoryRepository(),
     );
 
     const snapshot: LibrarySnapshot = { topArtists: [{ genres: ['dream pop'], popularity: 40 }], savedTracks: null };
@@ -140,6 +163,7 @@ describe('BuildDiscoveryQueue — the full Spotify Library → Candidate Provide
       new CandidateAggregator([new FakeCandidateProvider([])]),
       buildPipeline(),
       new RuleBasedRankingEngine(),
+      new FakeRecommendationMemoryRepository(),
     );
 
     await useCase.execute('user-1', EMPTY_SNAPSHOT, 10, NOW);
@@ -154,6 +178,7 @@ describe('BuildDiscoveryQueue — the full Spotify Library → Candidate Provide
       new CandidateAggregator([new FakeCandidateProvider([])]),
       buildPipeline(),
       new RuleBasedRankingEngine(),
+      new FakeRecommendationMemoryRepository(),
     );
 
     const result = expectSuccess(await useCase.execute('user-1', EMPTY_SNAPSHOT, 10, NOW));
@@ -171,6 +196,7 @@ describe('BuildDiscoveryQueue — the full Spotify Library → Candidate Provide
       new CandidateAggregator([new FakeCandidateProvider([candidate('c1', 'Track', 'Artist', [])])]),
       buildPipeline(),
       new RuleBasedRankingEngine(),
+      new FakeRecommendationMemoryRepository(),
     );
 
     const result = await useCase.execute('user-1', EMPTY_SNAPSHOT, 10, NOW);
@@ -194,6 +220,7 @@ describe('BuildDiscoveryQueue — excludeCandidateIds prevents repeat batches fr
       new CandidateAggregator([new FakeCandidateProvider(manyCandidates)]),
       buildPipeline(),
       new RuleBasedRankingEngine(),
+      new FakeRecommendationMemoryRepository(),
     );
 
     const result = expectSuccess(await useCase.execute('user-1', EMPTY_SNAPSHOT, 15, NOW, alreadyShown));
@@ -212,6 +239,7 @@ describe('BuildDiscoveryQueue — excludeCandidateIds prevents repeat batches fr
       new CandidateAggregator([provider]),
       buildPipeline(),
       new RuleBasedRankingEngine(),
+      new FakeRecommendationMemoryRepository(),
     );
 
     const firstBatch = expectSuccess(await useCase.execute('user-1', EMPTY_SNAPSHOT, 15, NOW));
@@ -232,6 +260,7 @@ describe('BuildDiscoveryQueue — excludeCandidateIds prevents repeat batches fr
       new CandidateAggregator([new FakeCandidateProvider(manyCandidates)]),
       buildPipeline(),
       new RuleBasedRankingEngine(),
+      new FakeRecommendationMemoryRepository(),
     );
 
     const result = expectSuccess(await useCase.execute('user-1', EMPTY_SNAPSHOT, 15, NOW, allShown));
@@ -250,6 +279,7 @@ describe('BuildDiscoveryQueue — requests a much larger pool from the provider 
       new CandidateAggregator([provider]),
       buildPipeline(),
       new RuleBasedRankingEngine(),
+      new FakeRecommendationMemoryRepository(),
     );
 
     await useCase.execute('user-1', EMPTY_SNAPSHOT, 15, NOW);
@@ -290,6 +320,7 @@ describe('BuildDiscoveryQueue — ranks the entire filtered pool before selectin
       new CandidateAggregator([provider]),
       buildPipeline(),
       new RuleBasedRankingEngine(),
+      new FakeRecommendationMemoryRepository(),
     );
 
     const result = expectSuccess(await useCase.execute('user-1', EMPTY_SNAPSHOT, 5, NOW));
@@ -307,6 +338,7 @@ describe('BuildDiscoveryQueue — ranks the entire filtered pool before selectin
       new CandidateAggregator([provider]),
       buildPipeline(),
       new RuleBasedRankingEngine(),
+      new FakeRecommendationMemoryRepository(),
     );
 
     const result = expectSuccess(await useCase.execute('user-1', EMPTY_SNAPSHOT, 5, NOW));
@@ -328,6 +360,7 @@ describe('BuildDiscoveryQueue — caps candidates per primary artist without re-
       new CandidateAggregator([new FakeCandidateProvider(allCandidates)]),
       buildPipeline(),
       new RuleBasedRankingEngine(),
+      new FakeRecommendationMemoryRepository(),
     );
 
     const result = expectSuccess(await useCase.execute('user-1', EMPTY_SNAPSHOT, 3, NOW));
@@ -353,5 +386,110 @@ describe('BuildDiscoveryQueue — caps candidates per primary artist without re-
     const fullRankOrder = ['a1', 'a2', 'a3', 'a4', 'b1', 'b2'];
     const positionsInRankOrder = returnedIds.map((id) => fullRankOrder.indexOf(id));
     expect(positionsInRankOrder).toEqual([...positionsInRankOrder].sort((a, z) => a - z));
+  });
+});
+
+describe('BuildDiscoveryQueue — filters out currently-suppressed candidates via Recommendation Memory (M29)', () => {
+  it('excludes a candidate with an active (non-expired) reject suppression', async () => {
+    const rejectedRecently: RecommendationMemoryEntry = {
+      candidateId: 'c1',
+      lastOutcome: 'reject',
+      lastOutcomeAt: NOW.toISOString(),
+      suppressedUntil: new Date(NOW.getTime() + 1000 * 60 * 60 * 24 * 60).toISOString(), // +60d, still in the future relative to NOW
+    };
+    const useCase = new BuildDiscoveryQueue(
+      new FakeUserDnaRepository(null),
+      new FakeTrackDnaRepository(),
+      new CandidateAggregator([new FakeCandidateProvider([candidate('c1', 'Track', 'Artist', []), candidate('c2', 'Track 2', 'Other', [])])]),
+      buildPipeline(),
+      new RuleBasedRankingEngine(),
+      new FakeRecommendationMemoryRepository([rejectedRecently]),
+    );
+
+    const result = expectSuccess(await useCase.execute('user-1', EMPTY_SNAPSHOT, 10, NOW));
+
+    const returnedIds = result.enrichedCandidates.map((enriched) => enriched.candidate.candidateId);
+    expect(returnedIds).not.toContain('c1');
+    expect(returnedIds).toContain('c2');
+  });
+
+  it('includes a candidate whose reject suppression has already expired', async () => {
+    const rejectedLongAgo: RecommendationMemoryEntry = {
+      candidateId: 'c1',
+      lastOutcome: 'reject',
+      lastOutcomeAt: '2025-01-01T00:00:00.000Z',
+      suppressedUntil: '2025-03-02T00:00:00.000Z', // 60 days after lastOutcomeAt — well before NOW (2026-01-01)
+    };
+    const useCase = new BuildDiscoveryQueue(
+      new FakeUserDnaRepository(null),
+      new FakeTrackDnaRepository(),
+      new CandidateAggregator([new FakeCandidateProvider([candidate('c1', 'Track', 'Artist', [])])]),
+      buildPipeline(),
+      new RuleBasedRankingEngine(),
+      new FakeRecommendationMemoryRepository([rejectedLongAgo]),
+    );
+
+    const result = expectSuccess(await useCase.execute('user-1', EMPTY_SNAPSHOT, 10, NOW));
+
+    const returnedIds = result.enrichedCandidates.map((enriched) => enriched.candidate.candidateId);
+    expect(returnedIds).toContain('c1');
+  });
+
+  it('permanently excludes a saved candidate, even far into the future', async () => {
+    const saved: RecommendationMemoryEntry = {
+      candidateId: 'c1',
+      lastOutcome: 'save',
+      lastOutcomeAt: '2020-01-01T00:00:00.000Z',
+      suppressedUntil: null,
+    };
+    const farFuture = new Date('2099-01-01T00:00:00.000Z');
+    const useCase = new BuildDiscoveryQueue(
+      new FakeUserDnaRepository(null),
+      new FakeTrackDnaRepository(),
+      new CandidateAggregator([new FakeCandidateProvider([candidate('c1', 'Track', 'Artist', []), candidate('c2', 'Track 2', 'Other', [])])]),
+      buildPipeline(),
+      new RuleBasedRankingEngine(),
+      new FakeRecommendationMemoryRepository([saved]),
+    );
+
+    const result = expectSuccess(await useCase.execute('user-1', EMPTY_SNAPSHOT, 10, farFuture));
+
+    const returnedIds = result.enrichedCandidates.map((enriched) => enriched.candidate.candidateId);
+    expect(returnedIds).not.toContain('c1');
+    expect(returnedIds).toContain('c2');
+  });
+
+  it('degrades a single failing memory lookup to "not suppressed" for that candidate alone, without aborting the batch', async () => {
+    const theFailure = repositoryFailure('RecommendationMemoryRepository.get', 'simulated outage');
+    const useCase = new BuildDiscoveryQueue(
+      new FakeUserDnaRepository(null),
+      new FakeTrackDnaRepository(),
+      new CandidateAggregator([new FakeCandidateProvider([candidate('c-fails', 'Track', 'Artist', []), candidate('c2', 'Track 2', 'Other', [])])]),
+      buildPipeline(),
+      new RuleBasedRankingEngine(),
+      new FakeRecommendationMemoryRepository([], { failNextGet: theFailure }),
+    );
+
+    const result = expectSuccess(await useCase.execute('user-1', EMPTY_SNAPSHOT, 10, NOW));
+
+    const returnedIds = result.enrichedCandidates.map((enriched) => enriched.candidate.candidateId);
+    expect(returnedIds).toContain('c-fails');
+    expect(returnedIds).toContain('c2');
+  });
+
+  it('is a no-regression no-op when Recommendation Memory is empty', async () => {
+    const useCase = new BuildDiscoveryQueue(
+      new FakeUserDnaRepository(null),
+      new FakeTrackDnaRepository(),
+      new CandidateAggregator([new FakeCandidateProvider([candidate('c1', 'Track', 'Artist', [])])]),
+      buildPipeline(),
+      new RuleBasedRankingEngine(),
+      new FakeRecommendationMemoryRepository(),
+    );
+
+    const result = expectSuccess(await useCase.execute('user-1', EMPTY_SNAPSHOT, 10, NOW));
+
+    const returnedIds = result.enrichedCandidates.map((enriched) => enriched.candidate.candidateId);
+    expect(returnedIds).toContain('c1');
   });
 });

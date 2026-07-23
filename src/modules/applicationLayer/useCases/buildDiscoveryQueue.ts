@@ -2,10 +2,11 @@ import { CandidateAggregator } from '../../candidateProviders';
 import type { RepositoryFailure } from '../../domainErrors';
 import type { EnrichedCandidate } from '../../enrichment';
 import { EnrichmentPipeline } from '../../enrichment';
-import type { TrackDnaRepository, UserDnaRepository } from '../../persistence';
+import type { RecommendationMemoryRepository, TrackDnaRepository, UserDnaRepository } from '../../persistence';
 import { RecommendationQueue } from '../../queue';
 import { SIGNAL_GROUPS } from '../../rankingEngine';
 import type { RankedCandidate, RankingEngine } from '../../rankingEngine';
+import { isSuppressed } from '../../recommendationMemory';
 import { success, type Result } from '../../result';
 import { buildColdStartUserDna, type LibrarySnapshot, type UserDNA } from '../../userDna';
 import { diversifyRankedCandidates } from './diversifyRankedCandidates';
@@ -74,6 +75,7 @@ export class BuildDiscoveryQueue {
   private readonly candidateAggregator: CandidateAggregator;
   private readonly enrichmentPipeline: EnrichmentPipeline;
   private readonly rankingEngine: RankingEngine;
+  private readonly recommendationMemoryRepository: RecommendationMemoryRepository;
 
   constructor(
     userDnaRepository: UserDnaRepository,
@@ -81,12 +83,14 @@ export class BuildDiscoveryQueue {
     candidateAggregator: CandidateAggregator,
     enrichmentPipeline: EnrichmentPipeline,
     rankingEngine: RankingEngine,
+    recommendationMemoryRepository: RecommendationMemoryRepository,
   ) {
     this.userDnaRepository = userDnaRepository;
     this.trackDnaRepository = trackDnaRepository;
     this.candidateAggregator = candidateAggregator;
     this.enrichmentPipeline = enrichmentPipeline;
     this.rankingEngine = rankingEngine;
+    this.recommendationMemoryRepository = recommendationMemoryRepository;
   }
 
   /**
@@ -108,7 +112,18 @@ export class BuildDiscoveryQueue {
     if (!userDnaResult.success) return userDnaResult;
 
     const { candidates } = await this.candidateAggregator.fetchAll({ limit: CANDIDATE_POOL_SIZE }, now);
-    const freshCandidates = candidates.filter((candidate) => !excludeCandidateIds.has(candidate.candidateId));
+    const notExcluded = candidates.filter((candidate) => !excludeCandidateIds.has(candidate.candidateId));
+
+    // M29: best-effort — a Recommendation Memory read failure for one
+    // candidate degrades to "not suppressed" for that candidate alone;
+    // it never aborts the batch, the same posture as every other
+    // best-effort degrade already in this method.
+    const memoryResults = await Promise.all(notExcluded.map((candidate) => this.recommendationMemoryRepository.get(candidate.candidateId)));
+    const freshCandidates = notExcluded.filter((_candidate, index) => {
+      const result = memoryResults[index];
+      return !isSuppressed(result.success ? result.value : null, now);
+    });
+
     const enrichedCandidates = await Promise.all(freshCandidates.map((candidate) => this.enrichmentPipeline.enrich(candidate, now)));
 
     const persisted: EnrichedCandidate[] = [];
