@@ -12,6 +12,9 @@ const { getSimilarArtists, getTopTracksForArtist, getTopTags } = vi.hoisted(() =
 }));
 vi.mock('../../lastfm', () => ({ getSimilarArtists, getTopTracksForArtist, getTopTags }));
 
+const { getAllArtists } = vi.hoisted(() => ({ getAllArtists: vi.fn<() => Promise<SpotifyArtist[]>>() }));
+vi.mock('../../storage', () => ({ getAllArtists }));
+
 const spotifyArtist = (name: string): SpotifyArtist => ({
   id: `spotify-${name}`,
   name,
@@ -36,6 +39,10 @@ const lastFmTrack = (id: string, name: string, artistName: string, playcount: nu
 
 beforeEach(() => {
   vi.resetAllMocks();
+  // M28 default: an empty local library, i.e. "never synced" — every
+  // pre-existing test in this file exercises exactly the pre-M28 seed
+  // set unless it explicitly overrides this.
+  getAllArtists.mockResolvedValue([]);
 });
 
 describe('LastFmCandidateProvider — real candidates from a real, self-contained source (Sprint 1 Rule 1/2)', () => {
@@ -164,5 +171,85 @@ describe('LastFmCandidateProvider — expanded candidate pool (M21)', () => {
     expect(candidates).toHaveLength(10);
     const artistNames = new Set(candidates.map((candidate) => candidate.artists[0]));
     expect(artistNames.size).toBe(10);
+  });
+});
+
+describe('LastFmCandidateProvider — widens seeds with the local library (M28)', () => {
+  it('seeds from local library artists in addition to Spotify top artists', async () => {
+    getTopArtists.mockResolvedValue([spotifyArtist('Radiohead')]);
+    getAllArtists.mockResolvedValue([spotifyArtist('Boards of Canada')]);
+    getSimilarArtists.mockResolvedValue([]);
+
+    const { LastFmCandidateProvider } = await import('./lastFmCandidateProvider');
+    await new LastFmCandidateProvider().fetchCandidates({ limit: 10 });
+
+    const calledWith = getSimilarArtists.mock.calls.map((call) => call[0]);
+    expect(calledWith).toContain('Radiohead');
+    expect(calledWith).toContain('Boards of Canada');
+  });
+
+  it('behaves identically to before M28 when the local library is empty (never synced)', async () => {
+    getTopArtists.mockResolvedValue([spotifyArtist('Radiohead')]);
+    getAllArtists.mockResolvedValue([]);
+    getSimilarArtists.mockResolvedValue([similarArtist('Sigur Ros', 0.9)]);
+    getTopTracksForArtist.mockResolvedValue([lastFmTrack('track-svefn', 'Svefn-g-englar', 'Sigur Ros', 500_000)]);
+    getTopTags.mockResolvedValue([]);
+
+    const { LastFmCandidateProvider } = await import('./lastFmCandidateProvider');
+    const candidates = await new LastFmCandidateProvider().fetchCandidates({ limit: 10 });
+
+    expect(getSimilarArtists).toHaveBeenCalledTimes(1);
+    expect(getSimilarArtists).toHaveBeenCalledWith('Radiohead');
+    expect(candidates).toHaveLength(1);
+  });
+
+  it('still seeds from Spotify top artists when the local library lookup rejects', async () => {
+    getTopArtists.mockResolvedValue([spotifyArtist('Radiohead')]);
+    getAllArtists.mockRejectedValue(new Error('indexedDB unavailable'));
+    getSimilarArtists.mockResolvedValue([]);
+
+    const { LastFmCandidateProvider } = await import('./lastFmCandidateProvider');
+    await new LastFmCandidateProvider().fetchCandidates({ limit: 10 });
+
+    expect(getSimilarArtists).toHaveBeenCalledWith('Radiohead');
+  });
+
+  it('does not double-count a library artist that case-insensitively matches an existing top artist', async () => {
+    getTopArtists.mockResolvedValue([spotifyArtist('Radiohead')]);
+    getAllArtists.mockResolvedValue([spotifyArtist('radiohead')]);
+    getSimilarArtists.mockResolvedValue([]);
+
+    const { LastFmCandidateProvider } = await import('./lastFmCandidateProvider');
+    await new LastFmCandidateProvider().fetchCandidates({ limit: 10 });
+
+    expect(getSimilarArtists).toHaveBeenCalledTimes(1);
+  });
+
+  it('caps the combined seed count at MAX_TOTAL_SEED_ARTISTS while always keeping every Spotify top artist', async () => {
+    const topArtists = Array.from({ length: 10 }, (_, i) => spotifyArtist(`Top${i}`));
+    const libraryArtists = Array.from({ length: 50 }, (_, i) => spotifyArtist(`Library${i}`));
+    getTopArtists.mockResolvedValue(topArtists);
+    getAllArtists.mockResolvedValue(libraryArtists);
+    getSimilarArtists.mockResolvedValue([]);
+
+    const { LastFmCandidateProvider } = await import('./lastFmCandidateProvider');
+    await new LastFmCandidateProvider().fetchCandidates({ limit: 10 });
+
+    expect(getSimilarArtists).toHaveBeenCalledTimes(30);
+    const calledWith = getSimilarArtists.mock.calls.map((call) => call[0]);
+    for (const topArtist of topArtists) {
+      expect(calledWith).toContain(topArtist.name);
+    }
+  });
+
+  it('returns an empty array when both Spotify top artists and the local library are empty', async () => {
+    getTopArtists.mockResolvedValue([]);
+    getAllArtists.mockResolvedValue([]);
+
+    const { LastFmCandidateProvider } = await import('./lastFmCandidateProvider');
+    const candidates = await new LastFmCandidateProvider().fetchCandidates({ limit: 10 });
+
+    expect(candidates).toEqual([]);
+    expect(getSimilarArtists).not.toHaveBeenCalled();
   });
 });

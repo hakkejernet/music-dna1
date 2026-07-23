@@ -27,8 +27,15 @@ const { getSimilarArtists, getTopTracksForArtist, getTopTags } = vi.hoisted(() =
 }));
 vi.mock('../lastfm', () => ({ getSimilarArtists, getTopTracksForArtist, getTopTags }));
 
-const { getAllTracks } = vi.hoisted(() => ({ getAllTracks: vi.fn<() => Promise<SpotifyTrack[]>>() }));
-vi.mock('../storage', () => ({ getAllTracks }));
+const { getAllTracks, getAllArtists } = vi.hoisted(() => ({
+  getAllTracks: vi.fn<() => Promise<SpotifyTrack[]>>(),
+  // M28: LastFmCandidateProvider now also reads getAllArtists() to widen
+  // its seed set from the local library — defaulted to [] here (the
+  // "never synced" case) so these pre-existing tests keep exercising
+  // exactly the Spotify-top-artists-only seed path they always have.
+  getAllArtists: vi.fn<() => Promise<SpotifyArtist[]>>(),
+}));
+vi.mock('../storage', () => ({ getAllTracks, getAllArtists }));
 
 const spotifyArtist = (name: string, genres: string[], popularity: number): SpotifyArtist => ({
   id: `spotify-${name}`,
@@ -56,6 +63,7 @@ const EMPTY_SNAPSHOT: LibrarySnapshot = { topArtists: null, savedTracks: null };
 
 beforeEach(() => {
   vi.resetAllMocks();
+  getAllArtists.mockResolvedValue([]);
 });
 
 describe('Sprint 1 — the whole Discovery flow, end to end through the real Composition Root (Rule 1/6/7/8)', () => {

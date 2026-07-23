@@ -1,5 +1,6 @@
 import { getTopTags, getSimilarArtists, getTopTracksForArtist } from '../../lastfm';
 import { getTopArtists } from '../../spotify';
+import { getAllArtists } from '../../storage';
 import type { Candidate, CandidateProvider, CandidateRequest } from '../../candidateProviders';
 
 /**
@@ -20,6 +21,16 @@ import type { Candidate, CandidateProvider, CandidateRequest } from '../../candi
 const MAX_SEED_ARTISTS = 10;
 const MAX_SIMILAR_PER_SEED = 8;
 const MAX_TRACKS_PER_ARTIST = 8;
+
+/**
+ * M28: a hard ceiling on the combined seed count (Spotify top artists +
+ * local library artists), bounding downstream Last.fm call volume
+ * regardless of how large the synced library is. A fixed, documented,
+ * undertuned constant — not derived from any real usage data — chosen
+ * only to bound growth to a predictable multiple of the previous,
+ * top-artists-only ceiling (30 vs. 10).
+ */
+const MAX_TOTAL_SEED_ARTISTS = 30;
 
 interface CandidateArtist {
   name: string;
@@ -56,9 +67,10 @@ export class LastFmCandidateProvider implements CandidateProvider {
   async fetchCandidates(request: CandidateRequest): Promise<Candidate[]> {
     try {
       const topArtists = await getTopArtists(MAX_SEED_ARTISTS);
-      if (topArtists.length === 0) return [];
+      const seedNames = await this.buildSeedNames(topArtists.map((artist) => artist.name));
+      if (seedNames.length === 0) return [];
 
-      const candidateArtists = await this.findCandidateArtists(topArtists.map((artist) => artist.name));
+      const candidateArtists = await this.findCandidateArtists(seedNames);
       if (candidateArtists.length === 0) return [];
 
       const candidates = await this.collectCandidates(candidateArtists);
@@ -66,6 +78,53 @@ export class LastFmCandidateProvider implements CandidateProvider {
     } catch {
       return [];
     }
+  }
+
+  /**
+   * M28: widens the seed set beyond the live Spotify top-artists call by
+   * also drawing on the user's already-synced local library
+   * (`modules/storage.getAllArtists()`) — zero new network calls, since
+   * that data is already on disk. Purely additive: `topArtistNames` are
+   * always included first, a library artist can only ever add a seed
+   * slot, never displace one.
+   *
+   * A local-storage failure (IndexedDB unavailable, or the user simply
+   * has never synced) degrades to "no additional seeds" via this
+   * function's own `.catch(() => [])` — deliberately local, not the
+   * outer try/catch in `fetchCandidates`, so a storage-layer problem
+   * never discards `topArtistNames`' perfectly valid seeds too. In that
+   * case (or for any never-synced user) this function returns exactly
+   * `topArtistNames`, deduplicated and capped — byte-for-byte the same
+   * seed set this provider used before M28.
+   *
+   * Seed-selection policy, stated explicitly so this never has to be
+   * reverse-engineered later: library artists are used in exactly the
+   * order `getAllArtists()` returns them — no re-sorting, no weighting
+   * or ranking by relevance, recency, or play count. That order is
+   * itself deterministic: `getAllArtists()` reads the `artists` object
+   * store via `keyPath: 'id'` (the artist's Spotify ID, an immutable,
+   * stable string), and IndexedDB's `getAll()` returns records in
+   * ascending order of that key — never insertion order, sync
+   * timestamp, or anything session-dependent. The same local library
+   * always produces the same seed set. When the combined list must be
+   * capped, the library artists with the lexicographically smallest
+   * Spotify IDs are the ones included — an arbitrary but fully
+   * deterministic tie-break, not a preference judgment.
+   */
+  private async buildSeedNames(topArtistNames: string[]): Promise<string[]> {
+    const libraryArtists = await getAllArtists().catch(() => []);
+    const libraryArtistNames = libraryArtists.map((artist) => artist.name);
+
+    const seedNames: string[] = [];
+    const seen = new Set<string>();
+    for (const name of [...topArtistNames, ...libraryArtistNames]) {
+      const key = name.toLowerCase();
+      if (seen.has(key)) continue;
+      if (seedNames.length >= MAX_TOTAL_SEED_ARTISTS) break;
+      seen.add(key);
+      seedNames.push(name);
+    }
+    return seedNames;
   }
 
   /** Similar artists per seed, merged and deduplicated by name (keeping the best match) — same shape as the old, already-proven LastFmRecommendationProvider logic (M15). */
