@@ -180,7 +180,11 @@ describe('BuildDiscoveryQueue — the full Spotify Library → Candidate Provide
 });
 
 describe('BuildDiscoveryQueue — excludeCandidateIds prevents repeat batches from showing the same songs (M19)', () => {
-  const manyCandidates = Array.from({ length: 20 }, (_, index) => candidate(`c${index}`, `Track ${index}`, 'Artist', []));
+  // M27: distinct artist per candidate — these tests exercise exclusion
+  // logic, not the per-artist diversity cap. A shared 'Artist' literal
+  // here would trip M27's cap and truncate these batches for a reason
+  // unrelated to what each test actually verifies.
+  const manyCandidates = Array.from({ length: 20 }, (_, index) => candidate(`c${index}`, `Track ${index}`, `Artist${index}`, []));
 
   it('omits every excluded candidate from the returned batch', async () => {
     const alreadyShown = new Set(manyCandidates.slice(0, 15).map((c) => c.candidateId));
@@ -272,8 +276,12 @@ describe('BuildDiscoveryQueue — ranks the entire filtered pool before selectin
     // Under the old slice-before-rank logic, a batch limit of 5 would have
     // taken only the first 5 fillers and never reached ranking at all —
     // this proves ranking now sees (and correctly prefers) the whole pool.
-    const fillers = Array.from({ length: 15 }, (_, i) => candidate(`filler${i}`, `Filler ${i}`, 'Artist', []));
-    const rockMatches = Array.from({ length: 5 }, (_, i) => candidate(`rock${i}`, `Rock Track ${i}`, 'Artist', ['rock']));
+    // M27: distinct artist per candidate — a shared 'Artist' literal
+    // across all 20 would trip the per-artist diversity cap and truncate
+    // the result for a reason unrelated to what this test verifies
+    // (that ranking, not raw fetch order, decides which candidates win).
+    const fillers = Array.from({ length: 15 }, (_, i) => candidate(`filler${i}`, `Filler ${i}`, `FillerArtist${i}`, []));
+    const rockMatches = Array.from({ length: 5 }, (_, i) => candidate(`rock${i}`, `Rock Track ${i}`, `RockArtist${i}`, ['rock']));
     const provider = new FakeCandidateProvider([...fillers, ...rockMatches]);
 
     const useCase = new BuildDiscoveryQueue(
@@ -305,5 +313,45 @@ describe('BuildDiscoveryQueue — ranks the entire filtered pool before selectin
 
     expect(provider.receivedLimits[0]).toBeGreaterThanOrEqual(100);
     expect(result.enrichedCandidates).toHaveLength(1);
+  });
+});
+
+describe('BuildDiscoveryQueue — caps candidates per primary artist without re-ranking (M27)', () => {
+  it('caps a dominant artist, preserves ranking order among survivors, and introduces no candidate that was not already present', async () => {
+    const dominant = ['a1', 'a2', 'a3', 'a4'].map((id) => candidate(id, `Track ${id}`, 'Dominant', []));
+    const other = ['b1', 'b2'].map((id) => candidate(id, `Track ${id}`, 'Other', []));
+    const allCandidates = [...dominant, ...other];
+
+    const useCase = new BuildDiscoveryQueue(
+      new FakeUserDnaRepository(null),
+      new FakeTrackDnaRepository(),
+      new CandidateAggregator([new FakeCandidateProvider(allCandidates)]),
+      buildPipeline(),
+      new RuleBasedRankingEngine(),
+    );
+
+    const result = expectSuccess(await useCase.execute('user-1', EMPTY_SNAPSHOT, 3, NOW));
+    const returnedIds = result.enrichedCandidates.map((enriched) => enriched.candidate.candidateId);
+
+    // Every candidate here scores 0 (no tags, no UserDNA signal overlap),
+    // so RuleBasedRankingEngine's own deterministic candidateRef
+    // tie-break fully determines rank order: a1 < a2 < a3 < a4 < b1 < b2.
+    // With BuildDiscoveryQueue's own maxPerArtist = 2, a3/a4 must be
+    // skipped in favor of b1 — verified precisely, not just by length.
+    expect(returnedIds).toEqual(['a1', 'a2', 'b1']);
+
+    // At most 2 of the 3 returned candidates are by the dominant artist.
+    const dominantIds = new Set(dominant.map((c) => c.candidateId));
+    expect(returnedIds.filter((id) => dominantIds.has(id))).toHaveLength(2);
+
+    // No candidate appears in the result that wasn't in the original pool.
+    const allIds = new Set(allCandidates.map((c) => c.candidateId));
+    expect(returnedIds.every((id) => allIds.has(id))).toBe(true);
+
+    // The result is a subsequence of the full rank order — never
+    // reordered, only filtered.
+    const fullRankOrder = ['a1', 'a2', 'a3', 'a4', 'b1', 'b2'];
+    const positionsInRankOrder = returnedIds.map((id) => fullRankOrder.indexOf(id));
+    expect(positionsInRankOrder).toEqual([...positionsInRankOrder].sort((a, z) => a - z));
   });
 });

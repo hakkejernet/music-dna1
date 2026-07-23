@@ -8,6 +8,7 @@ import { SIGNAL_GROUPS } from '../../rankingEngine';
 import type { RankedCandidate, RankingEngine } from '../../rankingEngine';
 import { success, type Result } from '../../result';
 import { buildColdStartUserDna, type LibrarySnapshot, type UserDNA } from '../../userDna';
+import { diversifyRankedCandidates } from './diversifyRankedCandidates';
 
 export interface DiscoveryQueueResult {
   queue: RecommendationQueue;
@@ -31,6 +32,16 @@ export interface DiscoveryQueueResult {
  * them, because that's all this use case asked for.
  */
 const CANDIDATE_POOL_SIZE = 500;
+
+/**
+ * M27: the maximum number of candidates by the same primary artist
+ * allowed in one queue. Owned here, not inside diversifyRankedCandidates
+ * itself — that function takes maxPerArtist as a parameter precisely so
+ * this value is a configuration choice this use case makes, not a
+ * constant baked into the filtering logic (dependency injection of a
+ * value, not a new architectural layer).
+ */
+const MAX_PER_ARTIST = 2;
 
 /**
  * Product Sprint 1's one new workflow: "Spotify Library → Candidate
@@ -112,9 +123,14 @@ export class BuildDiscoveryQueue {
     // arbitrary early slice of the fetched pool instead of choosing the
     // best-matching candidates out of everything actually available.
     const rankedPool = this.rankingEngine.rank(userDnaResult.value, persisted, now);
-    const topRanked = rankedPool.slice(0, limit);
 
     const persistedByCandidateId = new Map(persisted.map((enriched) => [enriched.candidate.candidateId, enriched]));
+
+    // M27: filter (never re-rank) the ranked pool down to `limit`, capping
+    // how many candidates by the same primary artist can appear together
+    // — RankingEngine's own order is otherwise fully preserved.
+    const topRanked = diversifyRankedCandidates(rankedPool, persistedByCandidateId, limit, MAX_PER_ARTIST);
+
     const topEnriched: EnrichedCandidate[] = [];
     for (const ranked of topRanked) {
       const enriched = persistedByCandidateId.get(ranked.candidateRef);
