@@ -5,12 +5,7 @@ import { buildLibrarySnapshot } from '../../modules/infrastructure';
 import { RecommendationQueue } from '../../modules/queue';
 import type { ReactionType } from '../../modules/queue';
 import type { EnrichedCandidate } from '../../modules/enrichment';
-import {
-  getCurrentUser,
-  getLastFailedSpotifyRequestDiagnostics,
-  SpotifyAuthError,
-  type SpotifyRequestDiagnostics,
-} from '../../modules/spotify';
+import { getCurrentUser, getSpotifyRequestLog, SpotifyAuthError, type SpotifyRequestDiagnostics } from '../../modules/spotify';
 import { getInstantSpotifyUrl, resolveSpotifyTrackUrl } from '../../modules/spotifyLink';
 import { useAuth } from '../auth/AuthContext';
 import { ActionBar } from './components/ActionBar';
@@ -40,8 +35,8 @@ export const DiscoveryPage = () => {
   const [spotifyUrl, setSpotifyUrl] = useState<string | null>(null);
   // TEMPORARY — manual-evaluation diagnostic state (see libraryCompositionAnalysis.ts). Remove alongside the rest of the block marked TEMPORARY in this file.
   const [libraryComposition, setLibraryComposition] = useState<LibraryCompositionSummary | null>(null);
-  // TEMPORARY — Concern B (403-on-/me) diagnostic state (see modules/spotify/client.ts). Populated from getLastFailedSpotifyRequestDiagnostics() whenever a load/refetch fails. Remove alongside the rest of the block marked TEMPORARY in this file.
-  const [requestDiagnostics, setRequestDiagnostics] = useState<SpotifyRequestDiagnostics | null>(null);
+  // TEMPORARY — Concern B (403-on-/me) diagnostic state (see modules/spotify/client.ts's request log). Remove alongside the rest of the block marked TEMPORARY in this file.
+  const [requestLog, setRequestLog] = useState<readonly SpotifyRequestDiagnostics[]>([]);
 
   // M19: every candidate ever included in a batch this session — save
   // and reject are both reactions to a candidate that was necessarily
@@ -58,6 +53,21 @@ export const DiscoveryPage = () => {
       new Date(),
     );
   };
+
+  /**
+   * TEMPORARY — Concern B diagnostic: modules/spotify/client.ts's request
+   * log is a module-level singleton mutated by every spotifyGet() call
+   * from *any* component — including RequireAuth's independent
+   * ensureLibrarySynced() → runFullSync() chain, which this page never
+   * calls itself. Polling is the simplest way to reflect those
+   * externally-caused mutations on-page without threading a callback
+   * through modules/spotify. Remove alongside the rest of the block
+   * marked TEMPORARY in this file.
+   */
+  useEffect(() => {
+    const interval = setInterval(() => setRequestLog(getSpotifyRequestLog()), 500);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -136,9 +146,6 @@ export const DiscoveryPage = () => {
           logout();
           return;
         }
-
-        // TEMPORARY — Concern B diagnostic capture, see state declaration above.
-        setRequestDiagnostics(getLastFailedSpotifyRequestDiagnostics());
 
         console.warn('[discovery] Kunne ikke indlæse anbefalinger:', error);
         setLoadError(error instanceof Error ? error.message : 'Der opstod en uventet fejl under indlæsning af anbefalinger.');
@@ -230,9 +237,6 @@ export const DiscoveryPage = () => {
         logout();
         return;
       }
-      // TEMPORARY — Concern B diagnostic capture, see state declaration above.
-      setRequestDiagnostics(getLastFailedSpotifyRequestDiagnostics());
-
       console.warn('[discovery] Kunne ikke indlæse en ny batch:', error);
       setLoadError(error instanceof Error ? error.message : 'Der opstod en uventet fejl under indlæsning af anbefalinger.');
     }
@@ -298,56 +302,63 @@ export const DiscoveryPage = () => {
   // ============================================================
 
   // ============================================================
-  // TEMPORARY — Concern B (403-on-/me) on-page diagnostic. Renders the
-  // raw HTTP details of the most recent failed Spotify request captured
-  // by modules/spotify/client.ts, since devtools isn't reachable while
-  // testing on iPad. Remove this block, the requestDiagnostics state
-  // above, and the two setRequestDiagnostics() calls in the catch
-  // blocks once the 403 investigation concludes.
+  // TEMPORARY — Concern B (403-on-/me) on-page diagnostic. Renders every
+  // Spotify request this page session has made — success or failure,
+  // from this component or any other (e.g. RequireAuth's
+  // ensureLibrarySynced()) — captured by modules/spotify/client.ts's
+  // request log, since devtools isn't reachable while testing on iPad.
+  // The point is comparing outcomes across endpoints in the same
+  // session (e.g. does /me/playlists succeed while /me returns 403).
+  // Remove this block, the requestLog state and polling effect above,
+  // once the 403 investigation concludes.
   // ============================================================
-  const requestDiagnosticsPanel = requestDiagnostics && (
+  const requestDiagnosticsPanel = requestLog.length > 0 && (
     <div style={{ background: '#222', color: '#f80', padding: '0.75rem', margin: '0.5rem 0', fontFamily: 'monospace', fontSize: '0.85rem', overflowX: 'auto' }}>
-      <strong>DEBUG: Last failed Spotify request (temporary)</strong>
-      <table style={{ width: '100%', marginTop: '0.5rem', borderCollapse: 'collapse' }}>
-        <tbody>
-          <tr style={{ borderBottom: '1px solid #444' }}>
-            <td style={{ padding: '0.15rem 0.5rem 0.15rem 0', verticalAlign: 'top' }}>timestamp</td>
-            <td style={{ padding: '0.15rem 0' }}>{new Date(requestDiagnostics.timestamp).toISOString()}</td>
-          </tr>
-          <tr style={{ borderBottom: '1px solid #444' }}>
-            <td style={{ padding: '0.15rem 0.5rem 0.15rem 0', verticalAlign: 'top' }}>url</td>
-            <td style={{ padding: '0.15rem 0', wordBreak: 'break-all' }}>{requestDiagnostics.url}</td>
-          </tr>
-          <tr style={{ borderBottom: '1px solid #444' }}>
-            <td style={{ padding: '0.15rem 0.5rem 0.15rem 0', verticalAlign: 'top' }}>status</td>
-            <td style={{ padding: '0.15rem 0' }}>{requestDiagnostics.status}</td>
-          </tr>
-          <tr style={{ borderBottom: '1px solid #444' }}>
-            <td style={{ padding: '0.15rem 0.5rem 0.15rem 0', verticalAlign: 'top' }}>statusText</td>
-            <td style={{ padding: '0.15rem 0' }}>{requestDiagnostics.statusText}</td>
-          </tr>
-          <tr style={{ borderBottom: '1px solid #444' }}>
-            <td style={{ padding: '0.15rem 0.5rem 0.15rem 0', verticalAlign: 'top' }}>authorizationHeaderAttached</td>
-            <td style={{ padding: '0.15rem 0' }}>{String(requestDiagnostics.authorizationHeaderAttached)}</td>
-          </tr>
-          <tr style={{ borderBottom: '1px solid #444' }}>
-            <td style={{ padding: '0.15rem 0.5rem 0.15rem 0', verticalAlign: 'top' }}>headers</td>
-            <td style={{ padding: '0.15rem 0', wordBreak: 'break-all' }}>
-              {Object.entries(requestDiagnostics.headers).map(([key, value]) => (
-                <div key={key}>
-                  {key}: {value}
-                </div>
-              ))}
-            </td>
-          </tr>
-          <tr>
-            <td style={{ padding: '0.15rem 0.5rem 0.15rem 0', verticalAlign: 'top' }}>body</td>
-            <td style={{ padding: '0.15rem 0', wordBreak: 'break-all', whiteSpace: 'pre-wrap' }}>
-              {requestDiagnostics.body || '(empty)'}
-            </td>
-          </tr>
-        </tbody>
-      </table>
+      <strong>DEBUG: Spotify request log, most recent first (temporary)</strong>
+      {[...requestLog].reverse().map((entry) => (
+        <table key={`${entry.timestamp}-${entry.url}`} style={{ width: '100%', marginTop: '0.5rem', borderCollapse: 'collapse', borderBottom: '2px solid #663' }}>
+          <tbody>
+            <tr style={{ borderBottom: '1px solid #444' }}>
+              <td style={{ padding: '0.15rem 0.5rem 0.15rem 0', verticalAlign: 'top' }}>timestamp</td>
+              <td style={{ padding: '0.15rem 0' }}>{new Date(entry.timestamp).toISOString()}</td>
+            </tr>
+            <tr style={{ borderBottom: '1px solid #444' }}>
+              <td style={{ padding: '0.15rem 0.5rem 0.15rem 0', verticalAlign: 'top' }}>url</td>
+              <td style={{ padding: '0.15rem 0', wordBreak: 'break-all' }}>{entry.url}</td>
+            </tr>
+            <tr style={{ borderBottom: '1px solid #444' }}>
+              <td style={{ padding: '0.15rem 0.5rem 0.15rem 0', verticalAlign: 'top' }}>ok</td>
+              <td style={{ padding: '0.15rem 0', color: entry.ok ? '#0f0' : '#f80' }}>{String(entry.ok)}</td>
+            </tr>
+            <tr style={{ borderBottom: '1px solid #444' }}>
+              <td style={{ padding: '0.15rem 0.5rem 0.15rem 0', verticalAlign: 'top' }}>status</td>
+              <td style={{ padding: '0.15rem 0' }}>{entry.status}</td>
+            </tr>
+            <tr style={{ borderBottom: '1px solid #444' }}>
+              <td style={{ padding: '0.15rem 0.5rem 0.15rem 0', verticalAlign: 'top' }}>statusText</td>
+              <td style={{ padding: '0.15rem 0' }}>{entry.statusText}</td>
+            </tr>
+            <tr style={{ borderBottom: '1px solid #444' }}>
+              <td style={{ padding: '0.15rem 0.5rem 0.15rem 0', verticalAlign: 'top' }}>authorizationHeaderAttached</td>
+              <td style={{ padding: '0.15rem 0' }}>{String(entry.authorizationHeaderAttached)}</td>
+            </tr>
+            <tr style={{ borderBottom: '1px solid #444' }}>
+              <td style={{ padding: '0.15rem 0.5rem 0.15rem 0', verticalAlign: 'top' }}>headers</td>
+              <td style={{ padding: '0.15rem 0', wordBreak: 'break-all' }}>
+                {Object.entries(entry.headers).map(([key, value]) => (
+                  <div key={key}>
+                    {key}: {value}
+                  </div>
+                ))}
+              </td>
+            </tr>
+            <tr>
+              <td style={{ padding: '0.15rem 0.5rem 0.15rem 0', verticalAlign: 'top' }}>body</td>
+              <td style={{ padding: '0.15rem 0', wordBreak: 'break-all', whiteSpace: 'pre-wrap' }}>{entry.body || '(empty)'}</td>
+            </tr>
+          </tbody>
+        </table>
+      ))}
     </div>
   );
   // ============================================================
