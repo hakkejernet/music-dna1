@@ -44,18 +44,22 @@ export const DashboardPage = () => {
     }
   }, [loadFromStorage]);
 
+  /**
+   * Deciding *whether* to start a sync is no longer this page's job —
+   * that now belongs to `ensureLibrarySynced()`, called from the
+   * authenticated application bootstrap (`RequireAuth` in App.tsx).
+   * This page only ever reads whatever is currently in storage,
+   * whether that's a fully synced library, a partially-synced one
+   * (bootstrap sync still in flight), or nothing yet — the existing
+   * `computeMusicDna`/`ready` rendering already handles an empty
+   * result the same way it already handles a sparse one. The manual
+   * "Opdater bibliotek" button below still calls `startSync()`
+   * directly, unchanged — that's an explicit user action, not
+   * automatic initialization.
+   */
   useEffect(() => {
-    void (async () => {
-      const lastSyncedAt = await getMeta('lastSyncedAt');
-      if (lastSyncedAt) {
-        await loadFromStorage();
-      } else {
-        await startSync();
-      }
-    })();
-    // Only run once on mount — startSync/loadFromStorage are stable via useCallback.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    void loadFromStorage();
+  }, [loadFromStorage]);
 
   if (state.status === 'checking') {
     return <div className="dashboard-status">Indlæser...</div>;
