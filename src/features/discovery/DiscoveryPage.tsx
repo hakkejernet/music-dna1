@@ -12,6 +12,7 @@ import { ActionBar } from './components/ActionBar';
 import { RecommendationCard } from './components/RecommendationCard';
 import { clearDiscoverySession, loadDiscoverySession, saveDiscoverySession } from './discoverySessionStorage';
 import { classifyEvidence } from './evidenceTier';
+import { analyzeLibraryArtistComposition } from './libraryCompositionAnalysis';
 
 /** How many real candidates one Spotify-Library → Candidate Provider → Ranking pass fetches (Sprint 1 Rule 1) — a fixed, small batch, not a paginated feed. */
 const DISCOVERY_LIMIT = 15;
@@ -56,6 +57,12 @@ export const DiscoveryPage = () => {
         const user = await getCurrentUser();
         if (cancelled) return;
         setUserId(user.id);
+
+        // TEMPORARY — manual-evaluation diagnostic (see
+        // libraryCompositionAnalysis.ts). Fire-and-forget: never
+        // awaited, never blocks the page, and the function itself
+        // never throws — same posture as recordReaction below.
+        void analyzeLibraryArtistComposition(user.id);
 
         // M20 Rule 3: resume exactly where the user left off if a valid,
         // non-expired session exists for this same Spotify user — a
