@@ -2,7 +2,7 @@ import { CandidateAggregator, type ProviderDiagnosticsEntry } from '../../candid
 import type { RepositoryFailure } from '../../domainErrors';
 import type { EnrichedCandidate } from '../../enrichment';
 import { EnrichmentPipeline } from '../../enrichment';
-import type { ObservationSink } from '../../observability';
+import type { CandidatePipelineMeasured, ObservationSink } from '../../observability';
 import type { RecommendationMemoryRepository, TrackDnaRepository, UserDnaRepository } from '../../persistence';
 import { RecommendationQueue } from '../../queue';
 import { SIGNAL_GROUPS } from '../../rankingEngine';
@@ -214,6 +214,30 @@ export class BuildDiscoveryQueue {
         { userId, rawCandidateCount, deduplicatedCandidateCount, enrichedCandidateCount, finalRankedPoolSize, providerDiagnostics },
         now,
       );
+
+      // ============================================================
+      // TEMPORARY — M31 manual evaluation aid. REMOVE after the
+      // manual evaluation phase is complete. Read-only: prints
+      // already-recorded observations, changes nothing about
+      // candidate selection, ranking, or what Discovery returns.
+      // ============================================================
+      const isCandidatePipelineMeasured = (observation: { type: string }): observation is CandidatePipelineMeasured => observation.type === 'CandidatePipelineMeasured';
+      const measurements = this.observationSink
+        .getAll()
+        .filter(isCandidatePipelineMeasured)
+        .map((observation) => ({
+          observedAt: observation.observedAt,
+          userId: observation.userId,
+          rawCandidateCount: observation.rawCandidateCount,
+          deduplicatedCandidateCount: observation.deduplicatedCandidateCount,
+          enrichedCandidateCount: observation.enrichedCandidateCount,
+          finalRankedPoolSize: observation.finalRankedPoolSize,
+          providerDiagnostics: JSON.stringify(observation.providerDiagnostics),
+        }));
+      console.table(measurements);
+      // ============================================================
+      // END TEMPORARY M31 manual evaluation aid.
+      // ============================================================
     } catch (error) {
       console.warn('[M31] Kunne ikke registrere pipeline-diagnostik (påvirker ikke Discovery):', error);
     }

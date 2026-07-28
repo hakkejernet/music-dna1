@@ -9,6 +9,7 @@ export {
 } from './metrics';
 export type { CalibrationBucket, CalibrationResult } from './metrics';
 export type {
+  CandidatePipelineMeasured,
   LearningApplied,
   Observation,
   ObservationSink,
