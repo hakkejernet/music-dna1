@@ -1,9 +1,9 @@
-import { getArtistsByIds, getCurrentUser, getPlaylistTracks, getUserPlaylists } from '../spotify';
+import { getArtistsByIds, getPlaylistTracks, getUserPlaylists } from '../spotify';
 import type { SpotifyTrack } from '../spotify/types';
 import { setMeta, upsertArtists, upsertPlaylists, upsertTracks } from '../storage';
 
 export interface SyncProgress {
-  stage: 'user' | 'playlists' | 'tracks' | 'artists' | 'done';
+  stage: 'playlists' | 'tracks' | 'artists' | 'done';
   message: string;
   completed: number;
   total: number;
@@ -14,11 +14,6 @@ const noop = () => {};
 export const runFullSync = async (
   onProgress: (progress: SyncProgress) => void = noop,
 ): Promise<void> => {
-  onProgress({ stage: 'user', message: 'Henter din Spotify-profil...', completed: 0, total: 1 });
-  const user = await getCurrentUser();
-  await setMeta('userId', user.id);
-  await setMeta('displayName', user.displayName ?? user.id);
-
   onProgress({ stage: 'playlists', message: 'Henter dine playlister...', completed: 0, total: 1 });
   const playlists = await getUserPlaylists();
   await upsertPlaylists(playlists);
