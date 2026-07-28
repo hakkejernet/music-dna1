@@ -12,7 +12,7 @@ import { ActionBar } from './components/ActionBar';
 import { RecommendationCard } from './components/RecommendationCard';
 import { clearDiscoverySession, loadDiscoverySession, saveDiscoverySession } from './discoverySessionStorage';
 import { classifyEvidence } from './evidenceTier';
-import { analyzeLibraryArtistComposition } from './libraryCompositionAnalysis';
+import { analyzeLibraryArtistComposition, type LibraryCompositionSummary } from './libraryCompositionAnalysis';
 
 /** How many real candidates one Spotify-Library → Candidate Provider → Ranking pass fetches (Sprint 1 Rule 1) — a fixed, small batch, not a paginated feed. */
 const DISCOVERY_LIMIT = 15;
@@ -33,6 +33,8 @@ export const DiscoveryPage = () => {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [lastAction, setLastAction] = useState<string | null>(null);
   const [spotifyUrl, setSpotifyUrl] = useState<string | null>(null);
+  // TEMPORARY — manual-evaluation diagnostic state (see libraryCompositionAnalysis.ts). Remove alongside the rest of the block marked TEMPORARY in this file.
+  const [libraryComposition, setLibraryComposition] = useState<LibraryCompositionSummary | null>(null);
 
   // M19: every candidate ever included in a batch this session — save
   // and reject are both reactions to a candidate that was necessarily
@@ -62,7 +64,12 @@ export const DiscoveryPage = () => {
         // libraryCompositionAnalysis.ts). Fire-and-forget: never
         // awaited, never blocks the page, and the function itself
         // never throws — same posture as recordReaction below.
-        void analyzeLibraryArtistComposition(user.id);
+        // Rendered on-page (see libraryComposition state + the
+        // TEMPORARY block in the JSX below) rather than console.table,
+        // since devtools isn't available while testing on iPad.
+        void analyzeLibraryArtistComposition(user.id).then((summary) => {
+          if (!cancelled) setLibraryComposition(summary);
+        });
 
         // M20 Rule 3: resume exactly where the user left off if a valid,
         // non-expired session exists for this same Spotify user — a
@@ -250,9 +257,37 @@ export const DiscoveryPage = () => {
   /** M25: how much evidence backed this recommendation's score — never how confident the system is that it's a good song (VISION.md). */
   const evidenceTier = useMemo(() => classifyEvidence(current?.score ?? 0), [current]);
 
+  // ============================================================
+  // TEMPORARY — on-page rendering of the M31-era manual-evaluation
+  // diagnostic (libraryCompositionAnalysis.ts), swapped in for
+  // console.table because devtools isn't reachable while testing on
+  // iPad. Read-only presentation of already-computed values — remove
+  // this block, the libraryComposition state above, and the `.then`
+  // wiring in the load effect once the investigation concludes.
+  // ============================================================
+  const debugPanel = libraryComposition && (
+    <div style={{ background: '#222', color: '#0f0', padding: '0.75rem', margin: '0.5rem 0', fontFamily: 'monospace', fontSize: '0.85rem', overflowX: 'auto' }}>
+      <strong>DEBUG: Library artist composition (temporary)</strong>
+      <table style={{ width: '100%', marginTop: '0.5rem', borderCollapse: 'collapse' }}>
+        <tbody>
+          {Object.entries(libraryComposition).map(([field, value]) => (
+            <tr key={field} style={{ borderBottom: '1px solid #444' }}>
+              <td style={{ padding: '0.15rem 0.5rem 0.15rem 0' }}>{field}</td>
+              <td style={{ padding: '0.15rem 0', textAlign: 'right' }}>{value}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+  // ============================================================
+  // END TEMPORARY on-page debug panel.
+  // ============================================================
+
   if (loadError) {
     return (
       <div className="dashboard-status">
+        {debugPanel}
         <h2>Noget gik galt</h2>
         <p>{loadError}</p>
       </div>
@@ -260,12 +295,18 @@ export const DiscoveryPage = () => {
   }
 
   if (!queue) {
-    return <div className="dashboard-status">Finder ny musik til dig...</div>;
+    return (
+      <div className="dashboard-status">
+        {debugPanel}
+        Finder ny musik til dig...
+      </div>
+    );
   }
 
   if (!current || !currentCandidate) {
     return (
       <div className="dashboard-status">
+        {debugPanel}
         <h2>Jeg har ikke flere gode forslag lige nu.</h2>
       </div>
     );
@@ -273,6 +314,7 @@ export const DiscoveryPage = () => {
 
   return (
     <div className="discovery">
+      {debugPanel}
       <header className="discovery__header">
         <div>
           <h1>Discovery</h1>

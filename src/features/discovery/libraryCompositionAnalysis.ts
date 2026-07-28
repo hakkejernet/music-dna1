@@ -20,16 +20,30 @@ import { getAllArtists, getAllPlaylists, getAllTracks } from '../../modules/stor
  */
 const TOP_ARTISTS_ANALYSIS_LIMIT = 50;
 
+/** The same fields previously printed as one console.table row — now returned so the caller can render them instead (presentation-only change, the computation itself is unchanged). */
+export interface LibraryCompositionSummary {
+  totalLibraryArtists: number;
+  followedPlaylistsOnly: number;
+  ownPlaylists: number;
+  ownedPlaylistsOnly: number;
+  bothOwnedAndFollowed: number;
+  overlapsTopArtists: number;
+  topArtistsSampleSize: number;
+  exactlyOneTrack: number;
+  multipleTracks: number;
+  noTracksFound: number;
+}
+
 /**
- * Answers, in one row: how many library artists come only from
+ * Answers, in one summary: how many library artists come only from
  * followed (not owned) playlists, how many come from the user's own
  * playlists (owned-only or both), how many overlap with Spotify Top
  * Artists, and how many are backed by exactly one track vs. more
  * than one. Never throws — a failure here must never affect
  * Discovery, the same posture as every other diagnostic-only block
- * in this codebase (M24, M31).
+ * in this codebase (M24, M31). Returns `null` on failure.
  */
-export const analyzeLibraryArtistComposition = async (currentUserId: string): Promise<void> => {
+export const analyzeLibraryArtistComposition = async (currentUserId: string): Promise<LibraryCompositionSummary | null> => {
   try {
     const [tracks, artists, playlists, topArtists] = await Promise.all([
       getAllTracks(),
@@ -83,21 +97,20 @@ export const analyzeLibraryArtistComposition = async (currentUserId: string): Pr
       if (topArtistIds.has(artist.id)) overlapsTopArtists += 1;
     }
 
-    console.table([
-      {
-        totalLibraryArtists: artists.length,
-        followedPlaylistsOnly,
-        ownPlaylists: ownedPlaylistsOnly + bothOwnedAndFollowed,
-        ownedPlaylistsOnly,
-        bothOwnedAndFollowed,
-        overlapsTopArtists,
-        topArtistsSampleSize: topArtists.length,
-        exactlyOneTrack,
-        multipleTracks,
-        noTracksFound,
-      },
-    ]);
+    return {
+      totalLibraryArtists: artists.length,
+      followedPlaylistsOnly,
+      ownPlaylists: ownedPlaylistsOnly + bothOwnedAndFollowed,
+      ownedPlaylistsOnly,
+      bothOwnedAndFollowed,
+      overlapsTopArtists,
+      topArtistsSampleSize: topArtists.length,
+      exactlyOneTrack,
+      multipleTracks,
+      noTracksFound,
+    };
   } catch (error) {
     console.warn('[library-composition] Kunne ikke analysere biblioteket (påvirker ikke Discovery):', error);
+    return null;
   }
 };
