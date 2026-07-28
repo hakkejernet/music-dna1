@@ -5,7 +5,12 @@ import { buildLibrarySnapshot } from '../../modules/infrastructure';
 import { RecommendationQueue } from '../../modules/queue';
 import type { ReactionType } from '../../modules/queue';
 import type { EnrichedCandidate } from '../../modules/enrichment';
-import { getCurrentUser, SpotifyAuthError } from '../../modules/spotify';
+import {
+  getCurrentUser,
+  getLastFailedSpotifyRequestDiagnostics,
+  SpotifyAuthError,
+  type SpotifyRequestDiagnostics,
+} from '../../modules/spotify';
 import { getInstantSpotifyUrl, resolveSpotifyTrackUrl } from '../../modules/spotifyLink';
 import { useAuth } from '../auth/AuthContext';
 import { ActionBar } from './components/ActionBar';
@@ -35,6 +40,8 @@ export const DiscoveryPage = () => {
   const [spotifyUrl, setSpotifyUrl] = useState<string | null>(null);
   // TEMPORARY — manual-evaluation diagnostic state (see libraryCompositionAnalysis.ts). Remove alongside the rest of the block marked TEMPORARY in this file.
   const [libraryComposition, setLibraryComposition] = useState<LibraryCompositionSummary | null>(null);
+  // TEMPORARY — Concern B (403-on-/me) diagnostic state (see modules/spotify/client.ts). Populated from getLastFailedSpotifyRequestDiagnostics() whenever a load/refetch fails. Remove alongside the rest of the block marked TEMPORARY in this file.
+  const [requestDiagnostics, setRequestDiagnostics] = useState<SpotifyRequestDiagnostics | null>(null);
 
   // M19: every candidate ever included in a batch this session — save
   // and reject are both reactions to a candidate that was necessarily
@@ -130,6 +137,9 @@ export const DiscoveryPage = () => {
           return;
         }
 
+        // TEMPORARY — Concern B diagnostic capture, see state declaration above.
+        setRequestDiagnostics(getLastFailedSpotifyRequestDiagnostics());
+
         console.warn('[discovery] Kunne ikke indlæse anbefalinger:', error);
         setLoadError(error instanceof Error ? error.message : 'Der opstod en uventet fejl under indlæsning af anbefalinger.');
       }
@@ -220,6 +230,9 @@ export const DiscoveryPage = () => {
         logout();
         return;
       }
+      // TEMPORARY — Concern B diagnostic capture, see state declaration above.
+      setRequestDiagnostics(getLastFailedSpotifyRequestDiagnostics());
+
       console.warn('[discovery] Kunne ikke indlæse en ny batch:', error);
       setLoadError(error instanceof Error ? error.message : 'Der opstod en uventet fejl under indlæsning af anbefalinger.');
     }
@@ -284,10 +297,68 @@ export const DiscoveryPage = () => {
   // END TEMPORARY on-page debug panel.
   // ============================================================
 
+  // ============================================================
+  // TEMPORARY — Concern B (403-on-/me) on-page diagnostic. Renders the
+  // raw HTTP details of the most recent failed Spotify request captured
+  // by modules/spotify/client.ts, since devtools isn't reachable while
+  // testing on iPad. Remove this block, the requestDiagnostics state
+  // above, and the two setRequestDiagnostics() calls in the catch
+  // blocks once the 403 investigation concludes.
+  // ============================================================
+  const requestDiagnosticsPanel = requestDiagnostics && (
+    <div style={{ background: '#222', color: '#f80', padding: '0.75rem', margin: '0.5rem 0', fontFamily: 'monospace', fontSize: '0.85rem', overflowX: 'auto' }}>
+      <strong>DEBUG: Last failed Spotify request (temporary)</strong>
+      <table style={{ width: '100%', marginTop: '0.5rem', borderCollapse: 'collapse' }}>
+        <tbody>
+          <tr style={{ borderBottom: '1px solid #444' }}>
+            <td style={{ padding: '0.15rem 0.5rem 0.15rem 0', verticalAlign: 'top' }}>timestamp</td>
+            <td style={{ padding: '0.15rem 0' }}>{new Date(requestDiagnostics.timestamp).toISOString()}</td>
+          </tr>
+          <tr style={{ borderBottom: '1px solid #444' }}>
+            <td style={{ padding: '0.15rem 0.5rem 0.15rem 0', verticalAlign: 'top' }}>url</td>
+            <td style={{ padding: '0.15rem 0', wordBreak: 'break-all' }}>{requestDiagnostics.url}</td>
+          </tr>
+          <tr style={{ borderBottom: '1px solid #444' }}>
+            <td style={{ padding: '0.15rem 0.5rem 0.15rem 0', verticalAlign: 'top' }}>status</td>
+            <td style={{ padding: '0.15rem 0' }}>{requestDiagnostics.status}</td>
+          </tr>
+          <tr style={{ borderBottom: '1px solid #444' }}>
+            <td style={{ padding: '0.15rem 0.5rem 0.15rem 0', verticalAlign: 'top' }}>statusText</td>
+            <td style={{ padding: '0.15rem 0' }}>{requestDiagnostics.statusText}</td>
+          </tr>
+          <tr style={{ borderBottom: '1px solid #444' }}>
+            <td style={{ padding: '0.15rem 0.5rem 0.15rem 0', verticalAlign: 'top' }}>authorizationHeaderAttached</td>
+            <td style={{ padding: '0.15rem 0' }}>{String(requestDiagnostics.authorizationHeaderAttached)}</td>
+          </tr>
+          <tr style={{ borderBottom: '1px solid #444' }}>
+            <td style={{ padding: '0.15rem 0.5rem 0.15rem 0', verticalAlign: 'top' }}>headers</td>
+            <td style={{ padding: '0.15rem 0', wordBreak: 'break-all' }}>
+              {Object.entries(requestDiagnostics.headers).map(([key, value]) => (
+                <div key={key}>
+                  {key}: {value}
+                </div>
+              ))}
+            </td>
+          </tr>
+          <tr>
+            <td style={{ padding: '0.15rem 0.5rem 0.15rem 0', verticalAlign: 'top' }}>body</td>
+            <td style={{ padding: '0.15rem 0', wordBreak: 'break-all', whiteSpace: 'pre-wrap' }}>
+              {requestDiagnostics.body || '(empty)'}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  );
+  // ============================================================
+  // END TEMPORARY request-diagnostics panel.
+  // ============================================================
+
   if (loadError) {
     return (
       <div className="dashboard-status">
         {debugPanel}
+        {requestDiagnosticsPanel}
         <h2>Noget gik galt</h2>
         <p>{loadError}</p>
       </div>
@@ -298,6 +369,7 @@ export const DiscoveryPage = () => {
     return (
       <div className="dashboard-status">
         {debugPanel}
+        {requestDiagnosticsPanel}
         Finder ny musik til dig...
       </div>
     );
@@ -307,6 +379,7 @@ export const DiscoveryPage = () => {
     return (
       <div className="dashboard-status">
         {debugPanel}
+        {requestDiagnosticsPanel}
         <h2>Jeg har ikke flere gode forslag lige nu.</h2>
       </div>
     );
@@ -315,6 +388,7 @@ export const DiscoveryPage = () => {
   return (
     <div className="discovery">
       {debugPanel}
+      {requestDiagnosticsPanel}
       <header className="discovery__header">
         <div>
           <h1>Discovery</h1>

@@ -8,8 +8,11 @@ export {
   getUserPlaylists,
   searchTracks,
 } from './endpoints';
-export { SpotifyAuthError } from './client';
+// getLastFailedSpotifyRequestDiagnostics/SpotifyRequestDiagnostics are TEMPORARY
+// (Concern B 403 investigation only) — see client.ts.
+export { getLastFailedSpotifyRequestDiagnostics, SpotifyAuthError } from './client';
 export type { RecommendationSeeds } from './endpoints';
+export type { SpotifyRequestDiagnostics } from './client';
 export type {
   SpotifyArtist,
   SpotifyArtistRef,
