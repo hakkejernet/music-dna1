@@ -141,6 +141,21 @@ const refreshAccessToken = async (previousTokens: SpotifyTokens): Promise<Spotif
 
 const EXPIRY_BUFFER_MS = 60_000;
 
+/**
+ * Since RequireAuth's ensureLibrarySynced() and each page's own Spotify
+ * calls are independent async chains that both call getValidAccessToken()
+ * on their own schedule, two callers can land here in the same near-expiry
+ * window. Without this guard each would fire its own concurrent
+ * POST /api/token refresh using the same refresh token — and per Spotify's
+ * documented behaviour, only one access token issued from a given refresh
+ * grant is guaranteed to stay valid; the other can be rejected by the
+ * resource server despite its own /token exchange having reported success.
+ * Tracking the in-flight refresh here means every concurrent caller
+ * awaits and shares the exact same result, so at most one refresh is ever
+ * issued per expiry window, regardless of how many callers ask.
+ */
+let refreshInFlight: Promise<SpotifyTokens> | null = null;
+
 export const getValidAccessToken = async (): Promise<string | null> => {
   const tokens = loadTokens();
   if (!tokens) return null;
@@ -150,7 +165,12 @@ export const getValidAccessToken = async (): Promise<string | null> => {
   }
 
   try {
-    const refreshed = await refreshAccessToken(tokens);
+    if (!refreshInFlight) {
+      refreshInFlight = refreshAccessToken(tokens).finally(() => {
+        refreshInFlight = null;
+      });
+    }
+    const refreshed = await refreshInFlight;
     return refreshed.accessToken;
   } catch {
     clearTokens();

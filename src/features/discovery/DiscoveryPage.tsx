@@ -5,14 +5,13 @@ import { buildLibrarySnapshot } from '../../modules/infrastructure';
 import { RecommendationQueue } from '../../modules/queue';
 import type { ReactionType } from '../../modules/queue';
 import type { EnrichedCandidate } from '../../modules/enrichment';
-import { getCurrentUser, getSpotifyRequestLog, SpotifyAuthError, type SpotifyRequestDiagnostics } from '../../modules/spotify';
+import { getCurrentUser, SpotifyAuthError } from '../../modules/spotify';
 import { getInstantSpotifyUrl, resolveSpotifyTrackUrl } from '../../modules/spotifyLink';
 import { useAuth } from '../auth/AuthContext';
 import { ActionBar } from './components/ActionBar';
 import { RecommendationCard } from './components/RecommendationCard';
 import { clearDiscoverySession, loadDiscoverySession, saveDiscoverySession } from './discoverySessionStorage';
 import { classifyEvidence } from './evidenceTier';
-import { analyzeLibraryArtistComposition, type LibraryCompositionSummary } from './libraryCompositionAnalysis';
 
 /** How many real candidates one Spotify-Library → Candidate Provider → Ranking pass fetches (Sprint 1 Rule 1) — a fixed, small batch, not a paginated feed. */
 const DISCOVERY_LIMIT = 15;
@@ -33,10 +32,6 @@ export const DiscoveryPage = () => {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [lastAction, setLastAction] = useState<string | null>(null);
   const [spotifyUrl, setSpotifyUrl] = useState<string | null>(null);
-  // TEMPORARY — manual-evaluation diagnostic state (see libraryCompositionAnalysis.ts). Remove alongside the rest of the block marked TEMPORARY in this file.
-  const [libraryComposition, setLibraryComposition] = useState<LibraryCompositionSummary | null>(null);
-  // TEMPORARY — Concern B (403-on-/me) diagnostic state (see modules/spotify/client.ts's request log). Remove alongside the rest of the block marked TEMPORARY in this file.
-  const [requestLog, setRequestLog] = useState<readonly SpotifyRequestDiagnostics[]>([]);
 
   // M19: every candidate ever included in a batch this session — save
   // and reject are both reactions to a candidate that was necessarily
@@ -54,21 +49,6 @@ export const DiscoveryPage = () => {
     );
   };
 
-  /**
-   * TEMPORARY — Concern B diagnostic: modules/spotify/client.ts's request
-   * log is a module-level singleton mutated by every spotifyGet() call
-   * from *any* component — including RequireAuth's independent
-   * ensureLibrarySynced() → runFullSync() chain, which this page never
-   * calls itself. Polling is the simplest way to reflect those
-   * externally-caused mutations on-page without threading a callback
-   * through modules/spotify. Remove alongside the rest of the block
-   * marked TEMPORARY in this file.
-   */
-  useEffect(() => {
-    const interval = setInterval(() => setRequestLog(getSpotifyRequestLog()), 500);
-    return () => clearInterval(interval);
-  }, []);
-
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -76,17 +56,6 @@ export const DiscoveryPage = () => {
         const user = await getCurrentUser();
         if (cancelled) return;
         setUserId(user.id);
-
-        // TEMPORARY — manual-evaluation diagnostic (see
-        // libraryCompositionAnalysis.ts). Fire-and-forget: never
-        // awaited, never blocks the page, and the function itself
-        // never throws — same posture as recordReaction below.
-        // Rendered on-page (see libraryComposition state + the
-        // TEMPORARY block in the JSX below) rather than console.table,
-        // since devtools isn't available while testing on iPad.
-        void analyzeLibraryArtistComposition(user.id).then((summary) => {
-          if (!cancelled) setLibraryComposition(summary);
-        });
 
         // M20 Rule 3: resume exactly where the user left off if a valid,
         // non-expired session exists for this same Spotify user — a
@@ -274,102 +243,9 @@ export const DiscoveryPage = () => {
   /** M25: how much evidence backed this recommendation's score — never how confident the system is that it's a good song (VISION.md). */
   const evidenceTier = useMemo(() => classifyEvidence(current?.score ?? 0), [current]);
 
-  // ============================================================
-  // TEMPORARY — on-page rendering of the M31-era manual-evaluation
-  // diagnostic (libraryCompositionAnalysis.ts), swapped in for
-  // console.table because devtools isn't reachable while testing on
-  // iPad. Read-only presentation of already-computed values — remove
-  // this block, the libraryComposition state above, and the `.then`
-  // wiring in the load effect once the investigation concludes.
-  // ============================================================
-  const debugPanel = libraryComposition && (
-    <div style={{ background: '#222', color: '#0f0', padding: '0.75rem', margin: '0.5rem 0', fontFamily: 'monospace', fontSize: '0.85rem', overflowX: 'auto' }}>
-      <strong>DEBUG: Library artist composition (temporary)</strong>
-      <table style={{ width: '100%', marginTop: '0.5rem', borderCollapse: 'collapse' }}>
-        <tbody>
-          {Object.entries(libraryComposition).map(([field, value]) => (
-            <tr key={field} style={{ borderBottom: '1px solid #444' }}>
-              <td style={{ padding: '0.15rem 0.5rem 0.15rem 0' }}>{field}</td>
-              <td style={{ padding: '0.15rem 0', textAlign: 'right' }}>{value}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-  // ============================================================
-  // END TEMPORARY on-page debug panel.
-  // ============================================================
-
-  // ============================================================
-  // TEMPORARY — Concern B (403-on-/me) on-page diagnostic. Renders every
-  // Spotify request this page session has made — success or failure,
-  // from this component or any other (e.g. RequireAuth's
-  // ensureLibrarySynced()) — captured by modules/spotify/client.ts's
-  // request log, since devtools isn't reachable while testing on iPad.
-  // The point is comparing outcomes across endpoints in the same
-  // session (e.g. does /me/playlists succeed while /me returns 403).
-  // Remove this block, the requestLog state and polling effect above,
-  // once the 403 investigation concludes.
-  // ============================================================
-  const requestDiagnosticsPanel = requestLog.length > 0 && (
-    <div style={{ background: '#222', color: '#f80', padding: '0.75rem', margin: '0.5rem 0', fontFamily: 'monospace', fontSize: '0.85rem', overflowX: 'auto' }}>
-      <strong>DEBUG: Spotify request log, most recent first (temporary)</strong>
-      {[...requestLog].reverse().map((entry) => (
-        <table key={`${entry.timestamp}-${entry.url}`} style={{ width: '100%', marginTop: '0.5rem', borderCollapse: 'collapse', borderBottom: '2px solid #663' }}>
-          <tbody>
-            <tr style={{ borderBottom: '1px solid #444' }}>
-              <td style={{ padding: '0.15rem 0.5rem 0.15rem 0', verticalAlign: 'top' }}>timestamp</td>
-              <td style={{ padding: '0.15rem 0' }}>{new Date(entry.timestamp).toISOString()}</td>
-            </tr>
-            <tr style={{ borderBottom: '1px solid #444' }}>
-              <td style={{ padding: '0.15rem 0.5rem 0.15rem 0', verticalAlign: 'top' }}>url</td>
-              <td style={{ padding: '0.15rem 0', wordBreak: 'break-all' }}>{entry.url}</td>
-            </tr>
-            <tr style={{ borderBottom: '1px solid #444' }}>
-              <td style={{ padding: '0.15rem 0.5rem 0.15rem 0', verticalAlign: 'top' }}>ok</td>
-              <td style={{ padding: '0.15rem 0', color: entry.ok ? '#0f0' : '#f80' }}>{String(entry.ok)}</td>
-            </tr>
-            <tr style={{ borderBottom: '1px solid #444' }}>
-              <td style={{ padding: '0.15rem 0.5rem 0.15rem 0', verticalAlign: 'top' }}>status</td>
-              <td style={{ padding: '0.15rem 0' }}>{entry.status}</td>
-            </tr>
-            <tr style={{ borderBottom: '1px solid #444' }}>
-              <td style={{ padding: '0.15rem 0.5rem 0.15rem 0', verticalAlign: 'top' }}>statusText</td>
-              <td style={{ padding: '0.15rem 0' }}>{entry.statusText}</td>
-            </tr>
-            <tr style={{ borderBottom: '1px solid #444' }}>
-              <td style={{ padding: '0.15rem 0.5rem 0.15rem 0', verticalAlign: 'top' }}>authorizationHeaderAttached</td>
-              <td style={{ padding: '0.15rem 0' }}>{String(entry.authorizationHeaderAttached)}</td>
-            </tr>
-            <tr style={{ borderBottom: '1px solid #444' }}>
-              <td style={{ padding: '0.15rem 0.5rem 0.15rem 0', verticalAlign: 'top' }}>headers</td>
-              <td style={{ padding: '0.15rem 0', wordBreak: 'break-all' }}>
-                {Object.entries(entry.headers).map(([key, value]) => (
-                  <div key={key}>
-                    {key}: {value}
-                  </div>
-                ))}
-              </td>
-            </tr>
-            <tr>
-              <td style={{ padding: '0.15rem 0.5rem 0.15rem 0', verticalAlign: 'top' }}>body</td>
-              <td style={{ padding: '0.15rem 0', wordBreak: 'break-all', whiteSpace: 'pre-wrap' }}>{entry.body || '(empty)'}</td>
-            </tr>
-          </tbody>
-        </table>
-      ))}
-    </div>
-  );
-  // ============================================================
-  // END TEMPORARY request-diagnostics panel.
-  // ============================================================
-
   if (loadError) {
     return (
       <div className="dashboard-status">
-        {debugPanel}
-        {requestDiagnosticsPanel}
         <h2>Noget gik galt</h2>
         <p>{loadError}</p>
       </div>
@@ -377,20 +253,12 @@ export const DiscoveryPage = () => {
   }
 
   if (!queue) {
-    return (
-      <div className="dashboard-status">
-        {debugPanel}
-        {requestDiagnosticsPanel}
-        Finder ny musik til dig...
-      </div>
-    );
+    return <div className="dashboard-status">Finder ny musik til dig...</div>;
   }
 
   if (!current || !currentCandidate) {
     return (
       <div className="dashboard-status">
-        {debugPanel}
-        {requestDiagnosticsPanel}
         <h2>Jeg har ikke flere gode forslag lige nu.</h2>
       </div>
     );
@@ -398,8 +266,6 @@ export const DiscoveryPage = () => {
 
   return (
     <div className="discovery">
-      {debugPanel}
-      {requestDiagnosticsPanel}
       <header className="discovery__header">
         <div>
           <h1>Discovery</h1>
