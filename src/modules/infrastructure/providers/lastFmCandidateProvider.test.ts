@@ -106,6 +106,7 @@ describe('LastFmCandidateProvider — real candidates from a real, self-containe
               similarArtistMatch: 0.9,
               seedArtist: 'Radiohead',
               similarArtist: 'Sigur Ros',
+              seedArtistSource: 'topArtists',
             },
           },
         ],

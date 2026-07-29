@@ -48,6 +48,21 @@ interface CandidateArtist {
   match: number;
   /** M24 diagnostic-only: the Spotify seed artist whose similar-artist lookup produced this artist's best match — lets a trace reconstruct "which top-artist started this chain." Never read by enrichment or ranking. */
   seedArtist: string;
+  /** TEMPORARY diagnostic-only (one-time candidate-quality audit): whether `seedArtist` came from the live Spotify Top Artists call or the local library. Never read by enrichment or ranking. */
+  seedArtistSource: 'topArtists' | 'library';
+}
+
+/** TEMPORARY diagnostic-only (one-time candidate-quality audit): a seed name tagged with where it came from, before `findCandidateArtists` loses track of that origin. */
+interface SeedName {
+  name: string;
+  source: 'topArtists' | 'library';
+}
+
+/** TEMPORARY diagnostic-only (one-time candidate-quality audit): which library seed track produced a track-similarity match, alongside the match score itself. */
+interface TrackSimilarityMatch {
+  matchScore: number;
+  seedTrackName: string;
+  seedTrackArtist: string;
 }
 
 /**
@@ -172,24 +187,32 @@ export class LastFmCandidateProvider implements CandidateProvider {
    * the same "keep the best match" merge `findCandidateArtists` already
    * uses for artists.
    */
-  private async buildTrackSimilarityIndex(diagnostics: LastFmProviderDiagnostics): Promise<Map<string, number>> {
+  private async buildTrackSimilarityIndex(diagnostics: LastFmProviderDiagnostics): Promise<Map<string, TrackSimilarityMatch>> {
     const libraryTracks = await getAllTracks().catch(() => []);
     const seedTracks = libraryTracks.slice(0, MAX_SIMILARITY_SEED_TRACKS).filter((track) => track.artists.length > 0);
 
     diagnostics.lastFmCallCount += seedTracks.length;
     const results = await Promise.allSettled(seedTracks.map((track) => getSimilarTracks(track.artists[0].name, track.name)));
 
-    const byKey = new Map<string, number>();
-    for (const result of results) {
-      if (result.status === 'rejected') continue;
+    const byKey = new Map<string, TrackSimilarityMatch>();
+    results.forEach((result, index) => {
+      if (result.status === 'rejected') return;
+      const seedTrack = seedTracks[index];
       for (const similar of result.value) {
         const key = normalizeTrackKey(similar.name, similar.artistName);
         const existing = byKey.get(key);
-        if (existing === undefined || similar.match > existing) {
-          byKey.set(key, similar.match);
+        if (existing === undefined || similar.match > existing.matchScore) {
+          byKey.set(key, {
+            matchScore: similar.match,
+            // TEMPORARY diagnostic-only (one-time candidate-quality audit): which
+            // library seed track's track.getsimilar lookup produced this match.
+            // Never read by enrichment or ranking.
+            seedTrackName: seedTrack.name,
+            seedTrackArtist: seedTrack.artists[0].name,
+          });
         }
       }
-    }
+    });
     return byKey;
   }
 
@@ -199,7 +222,7 @@ export class LastFmCandidateProvider implements CandidateProvider {
    * `buildTrackSimilarityIndex()`'s own index; every candidate without a
    * match, and every other `rawMetadata` field, is left untouched.
    */
-  private attachTrackSimilarity(candidates: Candidate[], trackSimilarityByKey: Map<string, number>): void {
+  private attachTrackSimilarity(candidates: Candidate[], trackSimilarityByKey: Map<string, TrackSimilarityMatch>): void {
     for (const candidate of candidates) {
       const primaryArtist = candidate.artists[0];
       if (primaryArtist === undefined) continue;
@@ -209,7 +232,14 @@ export class LastFmCandidateProvider implements CandidateProvider {
 
       const contribution = candidate.contributions[0];
       if (!contribution || typeof contribution.rawMetadata !== 'object' || contribution.rawMetadata === null) continue;
-      contribution.rawMetadata = { ...(contribution.rawMetadata as Record<string, unknown>), trackSimilarityMatch: match };
+      contribution.rawMetadata = {
+        ...(contribution.rawMetadata as Record<string, unknown>),
+        trackSimilarityMatch: match.matchScore,
+        // TEMPORARY diagnostic-only (one-time candidate-quality audit) —
+        // sibling field, never read by trackSimilarityEnricher (which only
+        // ever reads the numeric trackSimilarityMatch above).
+        trackSimilaritySeedTrack: { name: match.seedTrackName, artist: match.seedTrackArtist },
+      };
     }
   }
 
@@ -244,37 +274,47 @@ export class LastFmCandidateProvider implements CandidateProvider {
    * Spotify IDs are the ones included — an arbitrary but fully
    * deterministic tie-break, not a preference judgment.
    */
-  private async buildSeedNames(topArtistNames: string[]): Promise<string[]> {
+  private async buildSeedNames(topArtistNames: string[]): Promise<SeedName[]> {
     const libraryArtists = await getAllArtists().catch(() => []);
     const libraryArtistNames = libraryArtists.map((artist) => artist.name);
 
-    const seedNames: string[] = [];
+    // TEMPORARY diagnostic-only (one-time candidate-quality audit): tag each
+    // name with its source before the merge below — topArtistNames entries
+    // are tagged first, so a name appearing in both lists keeps its
+    // 'topArtists' tag, matching this function's existing "Spotify names
+    // always win" precedence.
+    const tagged: SeedName[] = [
+      ...topArtistNames.map((name) => ({ name, source: 'topArtists' as const })),
+      ...libraryArtistNames.map((name) => ({ name, source: 'library' as const })),
+    ];
+
+    const seedNames: SeedName[] = [];
     const seen = new Set<string>();
-    for (const name of [...topArtistNames, ...libraryArtistNames]) {
-      const key = name.toLowerCase();
+    for (const seed of tagged) {
+      const key = seed.name.toLowerCase();
       if (seen.has(key)) continue;
       if (seedNames.length >= MAX_TOTAL_SEED_ARTISTS) break;
       seen.add(key);
-      seedNames.push(name);
+      seedNames.push(seed);
     }
     return seedNames;
   }
 
   /** Similar artists per seed, merged and deduplicated by name (keeping the best match) — same shape as the old, already-proven LastFmRecommendationProvider logic (M15). */
-  private async findCandidateArtists(seedNames: string[], diagnostics: LastFmProviderDiagnostics): Promise<CandidateArtist[]> {
+  private async findCandidateArtists(seedNames: SeedName[], diagnostics: LastFmProviderDiagnostics): Promise<CandidateArtist[]> {
     diagnostics.lastFmCallCount += seedNames.length;
-    const results = await Promise.allSettled(seedNames.map((seed) => getSimilarArtists(seed)));
+    const results = await Promise.allSettled(seedNames.map((seed) => getSimilarArtists(seed.name)));
 
     const byName = new Map<string, CandidateArtist>();
     results.forEach((result, index) => {
       if (result.status === 'rejected') return;
-      const seedArtist = seedNames[index];
+      const seed = seedNames[index];
       for (const artist of result.value.slice(0, MAX_SIMILAR_PER_SEED)) {
         diagnostics.candidateArtistCountRaw += 1;
         const key = artist.name.toLowerCase();
         const existing = byName.get(key);
         if (!existing || artist.match > existing.match) {
-          byName.set(key, { name: artist.name, match: artist.match, seedArtist });
+          byName.set(key, { name: artist.name, match: artist.match, seedArtist: seed.name, seedArtistSource: seed.source });
         }
       }
     });
@@ -327,6 +367,8 @@ export class LastFmCandidateProvider implements CandidateProvider {
                 // M24 diagnostic-only provenance — never read by any enricher or by ranking.
                 seedArtist: artist.seedArtist,
                 similarArtist: artist.name,
+                // TEMPORARY diagnostic-only (one-time candidate-quality audit) — never read by any enricher or by ranking.
+                seedArtistSource: artist.seedArtistSource,
               },
             },
           ],

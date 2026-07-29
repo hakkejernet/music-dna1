@@ -5,8 +5,8 @@ import { EnrichmentPipeline } from '../../enrichment';
 import type { CandidatePipelineMeasured, ObservationSink } from '../../observability';
 import type { RecommendationMemoryRepository, TrackDnaRepository, UserDnaRepository } from '../../persistence';
 import { RecommendationQueue } from '../../queue';
-import { SIGNAL_GROUPS } from '../../rankingEngine';
-import type { RankedCandidate, RankingEngine } from '../../rankingEngine';
+import { computeSignalLevelDetail } from '../../rankingEngine';
+import type { RankedCandidate, RankingEngine, ScoreBreakdown, SignalLevelDetail } from '../../rankingEngine';
 import { isSuppressed } from '../../recommendationMemory';
 import { success, type Result } from '../../result';
 import { buildColdStartUserDna, type LibrarySnapshot, type UserDNA } from '../../userDna';
@@ -15,6 +15,46 @@ import { diversifyRankedCandidates } from './diversifyRankedCandidates';
 export interface DiscoveryQueueResult {
   queue: RecommendationQueue;
   enrichedCandidates: readonly EnrichedCandidate[];
+  /**
+   * TEMPORARY — one-time candidate-quality audit only (see
+   * `runCandidateQualityAudit`). `null` unless the audit ran (see that
+   * method for when). Remove this field, its population, and every
+   * consumer once the audit concludes.
+   */
+  candidateAuditEntries?: readonly CandidateAuditEntry[];
+}
+
+/**
+ * TEMPORARY — one-time candidate-quality audit only. One entry per
+ * candidate in the top `CANDIDATE_AUDIT_SIZE` of the fully ranked pool
+ * (before per-artist diversification), capturing every fact requested
+ * for the Danish-recommendation-dominance investigation. See
+ * `runCandidateQualityAudit` for exactly how each field is derived.
+ */
+export interface CandidateAuditEntry {
+  /** 1-based position in the fully ranked pool, before diversifyRankedCandidates() caps/reorders it down to the visible queue. */
+  rankPosition: number;
+  /** Whether this candidate actually survived diversifyRankedCandidates() into the visible queue — a candidate can rank highly and still be capped out by MAX_PER_ARTIST. */
+  survivedToQueue: boolean;
+  title: string;
+  artist: string;
+  /** Every CandidateProvider that contributed to this candidate (see CandidateAggregator's contribution-merging on dedup) — usually just ['lastfm'] today, but never assumed to be exactly one. */
+  providers: string[];
+  seedArtist: string | null;
+  /** Whether `seedArtist` came from the live Spotify Top Artists call or the local library — see LastFmCandidateProvider's TEMPORARY seedArtistSource tagging. */
+  seedArtistSource: 'topArtists' | 'library' | null;
+  similarArtist: string | null;
+  /** Present only when this candidate matched a track already in the user's library via Last.fm's track.getsimilar — see LastFmCandidateProvider's TEMPORARY trackSimilaritySeedTrack tagging. */
+  trackSimilaritySeedTrack: { name: string; artist: string } | null;
+  /** Human-readable reconstruction of "why this candidate exists" from the two provenance fields above. */
+  similarityChain: string;
+  /** Heuristic tag-keyword classification (see DANISH_LANGUAGE_KEYWORDS) — approximate, not ground truth: no data source anywhere in this app records a track/artist's actual country or language. */
+  countryLanguage: 'danish' | 'international' | 'unknown';
+  tags: string[];
+  score: number;
+  scoreBreakdown: ScoreBreakdown;
+  /** Full per-signal value/confidence/similarity detail underneath the 5 scoreBreakdown buckets — see computeSignalLevelDetail. */
+  signalDetail: SignalLevelDetail[];
 }
 
 /**
@@ -44,6 +84,48 @@ const CANDIDATE_POOL_SIZE = 500;
  * value, not a new architectural layer).
  */
 const MAX_PER_ARTIST = 2;
+
+/** TEMPORARY — one-time candidate-quality audit only: how many of the top-ranked pool to audit, per the Danish-recommendation-dominance investigation's request for "the first 100 recommendation candidates." */
+const CANDIDATE_AUDIT_SIZE = 100;
+
+/**
+ * TEMPORARY — one-time candidate-quality audit only. Crude keyword
+ * matching against Last.fm's free-text tags — the same "simplest
+ * correct implementation," fixed-list posture as tagBasedEnricher's own
+ * GENRE_KEYWORDS, applied here to nationality/language instead of
+ * genre. This is a heuristic, not ground truth: no signal, field, or
+ * API anywhere in this app records a track/artist's actual country or
+ * language (confirmed by inspection before this audit was built).
+ * Deliberately narrow (only unambiguous Danish-specific terms) so
+ * "danish" is never over-counted against Scandinavian neighbors.
+ */
+const DANISH_LANGUAGE_KEYWORDS = ['danish', 'dansk', 'denmark', 'danmark'];
+
+/** TEMPORARY — one-time candidate-quality audit only. See DANISH_LANGUAGE_KEYWORDS for the classification's known limits. */
+const classifyCountryLanguage = (tags: readonly string[]): 'danish' | 'international' | 'unknown' => {
+  if (tags.length === 0) return 'unknown';
+  const lowerTags = tags.map((tag) => tag.toLowerCase());
+  const isDanish = lowerTags.some((tag) => DANISH_LANGUAGE_KEYWORDS.some((keyword) => tag.includes(keyword)));
+  return isDanish ? 'danish' : 'international';
+};
+
+/** TEMPORARY — one-time candidate-quality audit only: a human-readable reconstruction of "why this candidate exists" from its provenance fields. */
+const buildSimilarityChain = (
+  seedArtist: string | null,
+  seedArtistSource: 'topArtists' | 'library' | null,
+  similarArtist: string | null,
+  trackSimilaritySeedTrack: { name: string; artist: string } | null,
+): string => {
+  const parts: string[] = [];
+  if (seedArtist !== null) {
+    const sourceLabel = seedArtistSource === 'topArtists' ? 'Spotify Top Artists' : seedArtistSource === 'library' ? 'local library' : 'unknown source';
+    parts.push(`${sourceLabel} seed "${seedArtist}" → Last.fm similar artist "${similarArtist ?? '(unknown)'}"`);
+  }
+  if (trackSimilaritySeedTrack !== null) {
+    parts.push(`library track "${trackSimilaritySeedTrack.artist} – ${trackSimilaritySeedTrack.name}" → Last.fm track.getsimilar`);
+  }
+  return parts.length > 0 ? parts.join('; ') : 'unknown (no recorded provenance)';
+};
 
 /**
  * Product Sprint 1's one new workflow: "Spotify Library → Candidate
@@ -159,24 +241,21 @@ export class BuildDiscoveryQueue {
       if (enriched) topEnriched.push(enriched);
     }
 
-    // M24 — TEMPORARY diagnostic trace (Recommendation Trace & Candidate
-    // Audit). Read-only: touches no candidate selection, no ranking, no
-    // persistence. Logs, per recommendation, exactly what the M24
-    // investigation asked for — seed chain, raw-pool position, and the
-    // 4 per-bucket scores — so it's possible to see WHY a given track
-    // survived the pipeline. Meant to be removed again once the audit
-    // this milestone requested is done.
-    this.logRecommendationTrace(candidates, persistedByCandidateId, rankedPool, topRanked);
-
     // M31: pipeline instrumentation — see recordPipelineMeasurement's own
     // docs for what each count measures. Purely observational (M13 Rule
     // 1): touches no candidate selection, no ranking, nothing this method
     // returns.
     this.recordPipelineMeasurement(userId, rawCandidateCount, deduplicatedCandidateCount, enrichedCandidates.length, topRanked.length, providerDiagnostics, now);
 
+    // TEMPORARY — one-time candidate-quality audit (Danish-recommendation-
+    // dominance investigation). Supersedes and replaces M24's
+    // logRecommendationTrace (same read-only posture, strictly more
+    // fields). See runCandidateQualityAudit's own docs.
+    const candidateAuditEntries = this.runCandidateQualityAudit(persistedByCandidateId, rankedPool, topRanked, userDnaResult.value);
+
     const queue = RecommendationQueue.create(topRanked);
 
-    return success({ queue, enrichedCandidates: topEnriched });
+    return success({ queue, enrichedCandidates: topEnriched, candidateAuditEntries });
   }
 
   /**
@@ -243,60 +322,73 @@ export class BuildDiscoveryQueue {
     }
   }
 
-  /** M24 diagnostic-only — see the block comment at its one call site. Never throws: a logging failure must never break Discovery. */
-  private logRecommendationTrace(
-    rawPool: readonly { candidateId: string }[],
+  /**
+   * TEMPORARY — one-time candidate-quality audit for the Danish-
+   * recommendation-dominance investigation. Read-only: touches no
+   * candidate selection, no ranking, no persistence — exactly the same
+   * posture as the M24 trace it replaces. Never throws: a failure here
+   * must never break Discovery.
+   *
+   * Audits the first CANDIDATE_AUDIT_SIZE entries of `rankedPool` — the
+   * fully ranked pool, in ranking order, BEFORE diversifyRankedCandidates()
+   * caps it down to the visible queue. `rankPosition` is this candidate's
+   * 1-based position in that order; `survivedToQueue` says whether it
+   * also made it past the per-artist cap into `topRanked`.
+   */
+  private runCandidateQualityAudit(
     persistedByCandidateId: ReadonlyMap<string, EnrichedCandidate>,
     rankedPool: readonly RankedCandidate[],
     topRanked: readonly RankedCandidate[],
-  ): void {
+    userDna: UserDNA,
+  ): CandidateAuditEntry[] {
     try {
-      const rawPoolPositionById = new Map(rawPool.map((candidate, index) => [candidate.candidateId, index]));
+      const survivedCandidateIds = new Set(topRanked.map((ranked) => ranked.candidateRef));
 
-      const buildTraceEntry = (ranked: RankedCandidate) => {
+      const buildEntry = (ranked: RankedCandidate, index: number): CandidateAuditEntry | null => {
         const enriched = persistedByCandidateId.get(ranked.candidateRef);
         if (!enriched) return null;
 
         const rawMetadata = enriched.candidate.contributions[0]?.rawMetadata;
         const provenance = typeof rawMetadata === 'object' && rawMetadata !== null ? (rawMetadata as Record<string, unknown>) : {};
         const tags = Array.isArray(provenance.tags) ? (provenance.tags as string[]) : [];
-        // Which of the 6 genre keywords the tag-based enricher actually
-        // matched (value === 1) for THIS track — as opposed to merely
-        // having a (possibly all-zero) reading at all.
-        const matchedGenreKeywords = SIGNAL_GROUPS.genreMatch.filter((key) => enriched.trackDna.signals[key].value === 1);
+
+        const seedArtist = typeof provenance.seedArtist === 'string' ? provenance.seedArtist : null;
+        const seedArtistSource = provenance.seedArtistSource === 'topArtists' || provenance.seedArtistSource === 'library' ? provenance.seedArtistSource : null;
+        const similarArtist = typeof provenance.similarArtist === 'string' ? provenance.similarArtist : null;
+        const rawSeedTrack = provenance.trackSimilaritySeedTrack;
+        const trackSimilaritySeedTrack =
+          typeof rawSeedTrack === 'object' && rawSeedTrack !== null && typeof (rawSeedTrack as { name: unknown }).name === 'string' && typeof (rawSeedTrack as { artist: unknown }).artist === 'string'
+            ? (rawSeedTrack as { name: string; artist: string })
+            : null;
 
         return {
+          rankPosition: index + 1,
+          survivedToQueue: survivedCandidateIds.has(ranked.candidateRef),
           title: enriched.candidate.title,
           artist: enriched.candidate.artists[0] ?? '(ukendt artist)',
-          candidateId: ranked.candidateRef,
-          seedArtist: typeof provenance.seedArtist === 'string' ? provenance.seedArtist : null,
-          similarArtist: typeof provenance.similarArtist === 'string' ? provenance.similarArtist : null,
-          rawPoolPosition: rawPoolPositionById.get(ranked.candidateRef) ?? null,
-          score: ranked.score,
-          genreScore: ranked.scoreBreakdown.genreMatch,
-          mainstreamScore: ranked.scoreBreakdown.mainstreamMatch,
-          explicitScore: ranked.scoreBreakdown.explicitMatch,
-          durationScore: ranked.scoreBreakdown.durationMatch,
+          providers: [...new Set(enriched.candidate.contributions.map((contribution) => contribution.providerName))],
+          seedArtist,
+          seedArtistSource,
+          similarArtist,
+          trackSimilaritySeedTrack,
+          similarityChain: buildSimilarityChain(seedArtist, seedArtistSource, similarArtist, trackSimilaritySeedTrack),
+          countryLanguage: classifyCountryLanguage(tags),
           tags,
-          matchedGenreKeywords,
-          // score === 0 means every bucket had zero combined confidence —
-          // this candidate's position in the queue came entirely from
-          // RuleBasedRankingEngine's candidateRef tie-break, not from any
-          // taste signal. See M24 root-cause analysis.
-          survivedByTieBreakOnly: ranked.score === 0,
+          score: ranked.score,
+          scoreBreakdown: ranked.scoreBreakdown,
+          signalDetail: computeSignalLevelDetail(userDna.signals, enriched.trackDna.signals),
         };
       };
 
-      const top20Trace = rankedPool.slice(0, 20).map(buildTraceEntry).filter((entry) => entry !== null);
-      console.debug('[M24 trace] Top 20 rangerede kandidater før RecommendationQueue bygges:', top20Trace);
-
-      for (const ranked of topRanked) {
-        const entry = buildTraceEntry(ranked);
-        if (!entry) continue;
-        console.debug(`[M24 trace] Anbefaling "${entry.title}" af ${entry.artist}${entry.survivedByTieBreakOnly ? ' — INGEN signal-overlap, valgt kun via tie-break' : ''}:`, entry);
+      const entries: CandidateAuditEntry[] = [];
+      for (const [index, ranked] of rankedPool.slice(0, CANDIDATE_AUDIT_SIZE).entries()) {
+        const entry = buildEntry(ranked, index);
+        if (entry) entries.push(entry);
       }
+      return entries;
     } catch (error) {
-      console.warn('[M24 trace] Diagnostisk logging fejlede (påvirker ikke Discovery):', error);
+      console.warn('[candidate-audit] Diagnostisk audit fejlede (påvirker ikke Discovery):', error);
+      return [];
     }
   }
 

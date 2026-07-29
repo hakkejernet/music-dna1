@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAppContext } from '../../AppContextProvider';
+import type { CandidateAuditEntry } from '../../modules/applicationLayer';
 import { processReactionEvent, type LearningEvent } from '../../modules/feedbackPipeline';
 import { buildLibrarySnapshot } from '../../modules/infrastructure';
 import { RecommendationQueue } from '../../modules/queue';
@@ -9,6 +10,7 @@ import { getCurrentUser, SpotifyAuthError } from '../../modules/spotify';
 import { getInstantSpotifyUrl, resolveSpotifyTrackUrl } from '../../modules/spotifyLink';
 import { useAuth } from '../auth/AuthContext';
 import { ActionBar } from './components/ActionBar';
+import { buildCandidateAuditSummary } from './candidateAuditSummary';
 import { RecommendationCard } from './components/RecommendationCard';
 import { clearDiscoverySession, loadDiscoverySession, saveDiscoverySession } from './discoverySessionStorage';
 import { classifyEvidence } from './evidenceTier';
@@ -32,6 +34,8 @@ export const DiscoveryPage = () => {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [lastAction, setLastAction] = useState<string | null>(null);
   const [spotifyUrl, setSpotifyUrl] = useState<string | null>(null);
+  // TEMPORARY — one-time candidate-quality audit (Danish-recommendation-dominance investigation). Captured once, from the initial load only (never from fetchNextBatch's refills). Remove alongside the rest of the block marked TEMPORARY in this file.
+  const [candidateAuditEntries, setCandidateAuditEntries] = useState<readonly CandidateAuditEntry[] | null>(null);
 
   // M19: every candidate ever included in a batch this session — save
   // and reject are both reactions to a candidate that was necessarily
@@ -98,6 +102,9 @@ export const DiscoveryPage = () => {
         setQueue(result.value.queue);
         setEnrichedById(enrichedMap);
         persistSession(user.id, result.value.queue, enrichedMap);
+
+        // TEMPORARY — one-time candidate-quality audit, see state declaration above.
+        if (result.value.candidateAuditEntries) setCandidateAuditEntries(result.value.candidateAuditEntries);
       } catch (error) {
         // Bugfix M16: without this, any thrown error in the load chain
         // (e.g. getCurrentUser() on an expired/missing Spotify session)
@@ -243,9 +250,135 @@ export const DiscoveryPage = () => {
   /** M25: how much evidence backed this recommendation's score — never how confident the system is that it's a good song (VISION.md). */
   const evidenceTier = useMemo(() => classifyEvidence(current?.score ?? 0), [current]);
 
+  // TEMPORARY — one-time candidate-quality audit, see state declaration above.
+  const candidateAuditSummary = useMemo(() => (candidateAuditEntries ? buildCandidateAuditSummary(candidateAuditEntries) : null), [candidateAuditEntries]);
+
+  // ============================================================
+  // TEMPORARY — one-time candidate-quality audit on-page report
+  // (Danish-recommendation-dominance investigation). Renders every field
+  // requested for the first CANDIDATE_AUDIT_SIZE (100) candidates of the
+  // fully ranked pool, plus the requested summary statistics, since
+  // devtools isn't reachable while testing on iPad. Remove this block,
+  // the candidateAuditEntries state + its capture above, and
+  // candidateAuditSummary.ts once the investigation concludes.
+  // ============================================================
+  const candidateAuditPanel = candidateAuditEntries && candidateAuditSummary && (
+    <div style={{ background: '#222', color: '#0ff', padding: '0.75rem', margin: '0.5rem 0', fontFamily: 'monospace', fontSize: '0.78rem', overflowX: 'auto' }}>
+      <strong>DEBUG: Candidate-quality audit — first {candidateAuditEntries.length} ranked candidates (temporary)</strong>
+
+      <div style={{ marginTop: '0.5rem' }}>
+        <div>Danish: {candidateAuditSummary.danishPercent}% — International: {candidateAuditSummary.internationalPercent}% — Unknown (no tags): {candidateAuditSummary.unknownPercent}%</div>
+        <div style={{ marginTop: '0.25rem' }}>Ranking factors among Danish candidates that survived into the queue (nonzero-score count):</div>
+        <div>{candidateAuditSummary.rankingFactorsAmongDanishSurvivors.map((f) => `${f.bucket}=${f.nonzeroCount}`).join(', ')}</div>
+      </div>
+
+      <div style={{ marginTop: '0.5rem' }}>
+        <strong>Top {candidateAuditSummary.topSeedArtists.length} seed artists by candidate count</strong>
+        <table style={{ width: '100%', marginTop: '0.25rem', borderCollapse: 'collapse' }}>
+          <tbody>
+            {candidateAuditSummary.topSeedArtists.map((s) => (
+              <tr key={s.seedArtist} style={{ borderBottom: '1px solid #444' }}>
+                <td style={{ padding: '0.1rem 0.5rem 0.1rem 0' }}>{s.seedArtist}</td>
+                <td style={{ padding: '0.1rem 0', textAlign: 'right' }}>{s.count}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div style={{ marginTop: '0.5rem' }}>
+        <strong>Seeds that produced Danish-classified candidates</strong>
+        <table style={{ width: '100%', marginTop: '0.25rem', borderCollapse: 'collapse' }}>
+          <tbody>
+            {candidateAuditSummary.seedsThatProducedDanishArtists.length === 0 ? (
+              <tr>
+                <td>(none)</td>
+              </tr>
+            ) : (
+              candidateAuditSummary.seedsThatProducedDanishArtists.map((s) => (
+                <tr key={s.seedArtist} style={{ borderBottom: '1px solid #444' }}>
+                  <td style={{ padding: '0.1rem 0.5rem 0.1rem 0' }}>{s.seedArtist}</td>
+                  <td style={{ padding: '0.1rem 0', textAlign: 'right' }}>{s.count}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <div style={{ marginTop: '0.5rem' }}>
+        <strong>Providers that produced Danish-classified candidates</strong>
+        <table style={{ width: '100%', marginTop: '0.25rem', borderCollapse: 'collapse' }}>
+          <tbody>
+            {candidateAuditSummary.providersThatProducedDanishArtists.length === 0 ? (
+              <tr>
+                <td>(none)</td>
+              </tr>
+            ) : (
+              candidateAuditSummary.providersThatProducedDanishArtists.map((p) => (
+                <tr key={p.provider} style={{ borderBottom: '1px solid #444' }}>
+                  <td style={{ padding: '0.1rem 0.5rem 0.1rem 0' }}>{p.provider}</td>
+                  <td style={{ padding: '0.1rem 0', textAlign: 'right' }}>{p.count}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <div style={{ marginTop: '0.75rem' }}>
+        <strong>All {candidateAuditEntries.length} candidates</strong>
+        <table style={{ width: '100%', marginTop: '0.25rem', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ borderBottom: '1px solid #666', textAlign: 'left' }}>
+              <th>#</th>
+              <th>Queue?</th>
+              <th>Title</th>
+              <th>Artist</th>
+              <th>Country</th>
+              <th>Score</th>
+              <th>Genre</th>
+              <th>Main.</th>
+              <th>Expl.</th>
+              <th>Dur.</th>
+              <th>TrackSim</th>
+              <th>Provider(s)</th>
+              <th>Similarity chain</th>
+              <th>Tags</th>
+            </tr>
+          </thead>
+          <tbody>
+            {candidateAuditEntries.map((entry) => (
+              <tr key={`${entry.rankPosition}-${entry.title}`} style={{ borderBottom: '1px solid #333' }}>
+                <td>{entry.rankPosition}</td>
+                <td>{entry.survivedToQueue ? 'yes' : 'no'}</td>
+                <td>{entry.title}</td>
+                <td>{entry.artist}</td>
+                <td style={{ color: entry.countryLanguage === 'danish' ? '#f80' : undefined }}>{entry.countryLanguage}</td>
+                <td>{entry.score.toFixed(1)}</td>
+                <td>{entry.scoreBreakdown.genreMatch.toFixed(2)}</td>
+                <td>{entry.scoreBreakdown.mainstreamMatch.toFixed(2)}</td>
+                <td>{entry.scoreBreakdown.explicitMatch.toFixed(2)}</td>
+                <td>{entry.scoreBreakdown.durationMatch.toFixed(2)}</td>
+                <td>{entry.scoreBreakdown.trackSimilarityMatch.toFixed(2)}</td>
+                <td>{entry.providers.join('+')}</td>
+                <td style={{ wordBreak: 'break-word' }}>{entry.similarityChain}</td>
+                <td style={{ wordBreak: 'break-word' }}>{entry.tags.join(', ')}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+  // ============================================================
+  // END TEMPORARY candidate-audit panel.
+  // ============================================================
+
   if (loadError) {
     return (
       <div className="dashboard-status">
+        {candidateAuditPanel}
         <h2>Noget gik galt</h2>
         <p>{loadError}</p>
       </div>
@@ -253,12 +386,18 @@ export const DiscoveryPage = () => {
   }
 
   if (!queue) {
-    return <div className="dashboard-status">Finder ny musik til dig...</div>;
+    return (
+      <div className="dashboard-status">
+        {candidateAuditPanel}
+        Finder ny musik til dig...
+      </div>
+    );
   }
 
   if (!current || !currentCandidate) {
     return (
       <div className="dashboard-status">
+        {candidateAuditPanel}
         <h2>Jeg har ikke flere gode forslag lige nu.</h2>
       </div>
     );
@@ -266,6 +405,7 @@ export const DiscoveryPage = () => {
 
   return (
     <div className="discovery">
+      {candidateAuditPanel}
       <header className="discovery__header">
         <div>
           <h1>Discovery</h1>

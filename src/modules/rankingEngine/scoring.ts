@@ -93,6 +93,50 @@ export const computeScore = (userSignals: SignalVector, trackSignals: SignalVect
   return { score, breakdown };
 };
 
+// ============================================================
+// TEMPORARY — one-time candidate-quality audit only (see
+// buildDiscoveryQueue.ts's runCandidateQualityAudit). Purely additive:
+// re-derives, per catalog signal, the same value/confidence/similarity
+// figures bucketScore() already computes internally but never exposes —
+// computeScore()/bucketScore() themselves are untouched. Remove this
+// export (and its one call site) once the audit concludes.
+// ============================================================
+export interface SignalLevelDetail {
+  signalKey: string;
+  breakdownBucket: ScoreBreakdownKey;
+  userValue: number | null;
+  userConfidence: number;
+  trackValue: number | null;
+  trackConfidence: number;
+  combinedWeight: number;
+  similarity: number | null;
+}
+
+export const computeSignalLevelDetail = (userSignals: SignalVector, trackSignals: SignalVector): SignalLevelDetail[] => {
+  const details: SignalLevelDetail[] = [];
+  for (const breakdownKey of SCORE_BREAKDOWN_KEYS) {
+    for (const signalKey of SIGNAL_GROUPS[breakdownKey]) {
+      const userReading = userSignals[signalKey];
+      const trackReading = trackSignals[signalKey];
+      const combinedWeight = userReading.confidence * trackReading.confidence;
+      details.push({
+        signalKey,
+        breakdownBucket: breakdownKey,
+        userValue: userReading.confidence > 0 ? userReading.value : null,
+        userConfidence: userReading.confidence,
+        trackValue: trackReading.confidence > 0 ? trackReading.value : null,
+        trackConfidence: trackReading.confidence,
+        combinedWeight,
+        similarity: combinedWeight > 0 ? valueSimilarity(userReading.value, trackReading.value) : null,
+      });
+    }
+  }
+  return details;
+};
+// ============================================================
+// END TEMPORARY per-signal detail.
+// ============================================================
+
 export const explainBreakdown = (breakdown: ScoreBreakdown): string[] => {
   const labels: Record<ScoreBreakdownKey, string> = {
     genreMatch: 'Genre-match med din smagsprofil',
