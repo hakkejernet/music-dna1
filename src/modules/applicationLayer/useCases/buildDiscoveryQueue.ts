@@ -11,6 +11,7 @@ import { isSuppressed } from '../../recommendationMemory';
 import { success, type Result } from '../../result';
 import { buildColdStartUserDna, type LibrarySnapshot, type UserDNA } from '../../userDna';
 import { diversifyRankedCandidates } from './diversifyRankedCandidates';
+import { diversifySeedCandidates } from './diversifySeedCandidates';
 
 export interface DiscoveryQueueResult {
   queue: RecommendationQueue;
@@ -76,6 +77,26 @@ export interface CandidateAuditEntry {
 const CANDIDATE_POOL_SIZE = 500;
 
 /**
+ * M32: how many raw candidates to request from CandidateAggregator
+ * before diversifySeedCandidates caps and selects down to
+ * CANDIDATE_POOL_SIZE. Deliberately larger than CANDIDATE_POOL_SIZE —
+ * capping a pool that a provider had *already* truncated down to
+ * exactly the target size would have nothing left to rebalance, since
+ * every candidate would already have to survive the cap to make the
+ * pool at all (a pure reorder, no actual diversification). This costs
+ * no extra network calls (same "asking for more just lets more of an
+ * already-computed pool through the final slice" reasoning CANDIDATE_POOL_SIZE's
+ * own M19/M21 history already established) — LastFmCandidateProvider
+ * computes its full candidate universe before ever truncating to
+ * whatever limit it's given. Generously larger than any
+ * CandidateProvider's realistic internal ceiling today (Last.fm's own,
+ * documented in that file, tops out under 2000) — not tuned to a
+ * specific provider, just large enough that this number is never
+ * itself the thing doing the truncating.
+ */
+const RAW_CANDIDATE_FETCH_SIZE = 2000;
+
+/**
  * M27: the maximum number of candidates by the same primary artist
  * allowed in one queue. Owned here, not inside diversifyRankedCandidates
  * itself — that function takes maxPerArtist as a parameter precisely so
@@ -84,6 +105,15 @@ const CANDIDATE_POOL_SIZE = 500;
  * value, not a new architectural layer).
  */
 const MAX_PER_ARTIST = 2;
+
+/**
+ * M32: the maximum number of candidates any single seed artist may
+ * contribute to the pool that goes on to enrichment and ranking. Owned
+ * here for the same reason MAX_PER_ARTIST is (see its own comment):
+ * diversifySeedCandidates takes this as a parameter, not a constant
+ * baked into itself, so this use case decides the value.
+ */
+const MAX_CANDIDATES_PER_SEED_ARTIST = 3;
 
 /** TEMPORARY — one-time candidate-quality audit only: how many of the top-ranked pool to audit, per the Danish-recommendation-dominance investigation's request for "the first 100 recommendation candidates." */
 const CANDIDATE_AUDIT_SIZE = 100;
@@ -197,10 +227,23 @@ export class BuildDiscoveryQueue {
     const userDnaResult = await this.ensureUserDna(userId, snapshot, now);
     if (!userDnaResult.success) return userDnaResult;
 
-    const { candidates, rawCandidateCount, deduplicatedCandidateCount, providerDiagnostics } = await this.candidateAggregator.fetchAll(
-      { limit: CANDIDATE_POOL_SIZE },
+    const { candidates: aggregatedCandidates, rawCandidateCount, deduplicatedCandidateCount, providerDiagnostics } = await this.candidateAggregator.fetchAll(
+      { limit: RAW_CANDIDATE_FETCH_SIZE },
       now,
     );
+
+    // M32: select CANDIDATE_POOL_SIZE candidates out of the larger raw
+    // pool just fetched, capping how many any single seed artist can
+    // contribute — applied here, immediately after aggregation and
+    // before exclusion/enrichment/ranking, so every downstream stage
+    // (including RankingEngine, completely unmodified) works from the
+    // rebalanced pool. Never re-fetches anything (no new Last.fm calls:
+    // RAW_CANDIDATE_FETCH_SIZE's own docs explain why), and never
+    // reduces CANDIDATE_POOL_SIZE, the same target pool size ranking has
+    // always worked with — only which CANDIDATE_POOL_SIZE candidates
+    // make the cut changes.
+    const candidates = diversifySeedCandidates(aggregatedCandidates, MAX_CANDIDATES_PER_SEED_ARTIST, CANDIDATE_POOL_SIZE);
+
     const notExcluded = candidates.filter((candidate) => !excludeCandidateIds.has(candidate.candidateId));
 
     // M29: best-effort — a Recommendation Memory read failure for one
