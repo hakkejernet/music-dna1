@@ -34,7 +34,12 @@ export interface SpotifyRequestDiagnostics {
 const MAX_LOGGED_REQUESTS = 50;
 const requestLog: SpotifyRequestDiagnostics[] = [];
 
-export const getSpotifyRequestLog = (): readonly SpotifyRequestDiagnostics[] => requestLog;
+// A fresh array each call (not the live, mutated `requestLog`) — a caller
+// that puts this into React state and polls it needs a new reference each
+// time to reliably trigger a re-render; handing back the same mutated
+// array would make React's setState bail out on every poll after the
+// first, since it never sees the reference change.
+export const getSpotifyRequestLog = (): readonly SpotifyRequestDiagnostics[] => [...requestLog];
 
 /** Reads the body once and appends a log entry; returns the body text so callers don't need a second, invalid read. */
 const recordRequestDiagnostics = async (
@@ -53,7 +58,20 @@ const recordRequestDiagnostics = async (
     body,
     authorizationHeaderAttached,
   });
-  if (requestLog.length > MAX_LOGGED_REQUESTS) requestLog.shift();
+  if (requestLog.length > MAX_LOGGED_REQUESTS) {
+    // Evict the oldest successful request first — a diagnostic log whose
+    // whole purpose is surfacing failures must never let a long run of
+    // routine 200s (e.g. runFullSync() paginating through a large
+    // library) push a genuine failure out the front. Only if every
+    // entry is currently a failure (never observed in practice) does
+    // this fall back to evicting the oldest entry regardless.
+    const oldestSuccessIndex = requestLog.findIndex((entry) => entry.ok);
+    if (oldestSuccessIndex !== -1) {
+      requestLog.splice(oldestSuccessIndex, 1);
+    } else {
+      requestLog.shift();
+    }
+  }
   return body;
 };
 // ============================================================
